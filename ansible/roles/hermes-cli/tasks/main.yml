@@ -1,0 +1,98 @@
+---
+- name: Install Hermes CLI
+  shell: |
+    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+  args:
+    creates: /home/{{ dev_user }}/.hermes/bin/hermes
+  register: hermes_install
+  # Note: install.sh writes to ~/.hermes/ — runs as root in playbook context
+  # We'll fix ownership after
+
+- name: Fix Hermes ownership
+  file:
+    path: "/root/.hermes"
+    state: directory
+    recurse: yes
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+  when: hermes_install.changed
+
+- name: Move Hermes to dev user
+  shell: |
+    if [ -d /root/.hermes ] && [ ! -d /home/{{ dev_user }}/.hermes ]; then
+      mv /root/.hermes /home/{{ dev_user }}/.hermes
+      chown -R {{ dev_user }}:{{ dev_user }} /home/{{ dev_user }}/.hermes
+    fi
+  when: hermes_install.changed
+
+- name: Configure Hermes (provider)
+  become_user: "{{ dev_user }}"
+  command: "hermes config set model.provider openrouter"
+
+- name: Configure Hermes (model)
+  become_user: "{{ dev_user }}"
+  command: "hermes config set model.default deepseek/deepseek-v4-flash"
+
+- name: Configure Hermes (base URL)
+  become_user: "{{ dev_user }}"
+  command: "hermes config set model.base_url https://openrouter.ai/api/v1"
+
+- name: Configure Hermes (max turns)
+  become_user: "{{ dev_user }}"
+  command: "hermes config set agent.max_turns 150"
+
+- name: Write Hermes secrets (.env)
+  copy:
+    content: |
+      OPENROUTER_API_KEY={{ lookup('env', 'OPENROUTER_API_KEY') }}
+    dest: "/home/{{ dev_user }}/.hermes/.env"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0600"
+
+- name: Set workspace as default Hermes cwd
+  become_user: "{{ dev_user }}"
+  command: "hermes config set terminal.cwd /home/{{ dev_user }}/dev"
+
+- name: Write SOUL.md (agent identity)
+  copy:
+    dest: "/home/{{ dev_user }}/.hermes/SOUL.md"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      # SOUL: agent-rig dev VM agent
+
+      You are the **agent-rig** dev environment agent.
+      You live on a Vultr VM provisioned for Bogdan.
+
+      ## Identity
+      - You are a helpful dev environment assistant
+      - Your workspace is `/home/dev/dev/` — use short paths
+      - You have gh, yc, docker, git available
+
+      ## Rules
+      - Be concise and factual
+      - When working with GitHub: use `gh` (authenticated as GitHub App)
+      - When working with Yandex Cloud: use `yc`
+      - No secrets in file output — they come from 1Password
+
+- name: Install key Hermes skills
+  become_user: "{{ dev_user }}"
+  shell: |
+    hermes skills install hermes-agent 2>/dev/null || true
+    hermes skills install github-pr-workflow 2>/dev/null || true
+    hermes skills install claude-code 2>/dev/null || true
+    hermes skills install codex 2>/dev/null || true
+  ignore_errors: true
+
+- name: Run hermes doctor
+  become_user: "{{ dev_user }}"
+  shell: "hermes doctor 2>&1 | head -20"
+  register: doctor
+  ignore_errors: true
+  changed_when: false
+
+- name: Show doctor results
+  debug:
+    msg: "{{ doctor.stdout_lines | default(['hermes doctor skipped']) }}"

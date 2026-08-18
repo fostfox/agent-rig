@@ -1,0 +1,55 @@
+---
+- name: Install yc CLI
+  block:
+    - name: Download yc install script
+      get_url:
+        url: https://storage.yandexcloud.net/yandexcloud-yc/install.sh
+        dest: /tmp/yc-install.sh
+        mode: "0755"
+
+    - name: Run yc installer
+      shell: |
+        /tmp/yc-install.sh -i /opt/yc -n 2>&1 | tail -5
+      args:
+        creates: /opt/yc/bin/yc
+      environment:
+        YC_INSTALL_PATH: /opt/yc
+
+    - name: Create symlink
+      file:
+        src: /opt/yc/bin/yc
+        dest: /usr/local/bin/yc
+        state: link
+
+- name: Create yc config directory
+  file:
+    path: "/home/{{ dev_user }}/.config/yandex-cloud"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0700"
+
+- name: Write Yandex Cloud service account key
+  copy:
+    content: "{{ lookup('env', 'YC_SA_KEY_JSON') }}"
+    dest: "/home/{{ dev_user }}/.config/yandex-cloud/sa-key.json"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0600"
+
+- name: Configure yc profile
+  become_user: "{{ dev_user }}"
+  shell: |
+    yc config set service-account-key /home/{{ dev_user }}/.config/yandex-cloud/sa-key.json
+    # yc config set folder-id ...  # user needs to set this
+    # yc config set cloud-id ...   # user needs to set this
+
+- name: Add yc helper to bashrc
+  blockinfile:
+    path: "/home/{{ dev_user }}/.bashrc"
+    block: |
+      # yc CLI is pre-configured with SA key
+      # Set your folder: yc config set folder-id <id>
+      # Set your cloud:  yc config set cloud-id <id>
+    marker: "# {mark} YC CLI"
+    state: present

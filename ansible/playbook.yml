@@ -1,0 +1,77 @@
+---
+- name: Provision Vultr VM
+  hosts: localhost
+  gather_facts: false
+  vars:
+    vm_label: agent-rig
+    vm_plan: "{{ lookup('env', 'VULTR_PLAN') | default('vc2-2c-4gb', true) }}"
+    vm_region: "{{ lookup('env', 'VULTR_REGION') | default('fra', true) }}"
+    vm_os_id: "213"  # Ubuntu 24.04 LTS
+
+  tasks:
+    - name: Upload SSH key to Vultr
+      vultr.cloud.ssh_key:
+        name: "{{ vm_label }}"
+        ssh_key: "{{ lookup('env', 'SSH_PUBLIC_KEY') }}"
+      register: vultr_ssh_key
+
+    - name: Create VM
+      vultr.cloud.instance:
+        label: "{{ vm_label }}"
+        plan: "{{ vm_plan }}"
+        region: "{{ vm_region }}"
+        os_id: "{{ vm_os_id }}"
+        ssh_keys: ["{{ vultr_ssh_key.vultr_ssh_key.id }}"]
+        hostname: "{{ vm_label }}"
+        tags:
+          - "{{ vm_label }}"
+        backup: false
+      register: vm
+      until: vm is success
+      retries: 3
+      delay: 10
+
+    - name: Wait for SSH
+      wait_for:
+        host: "{{ vm.vultr_instance.main_ip }}"
+        port: 22
+        timeout: 300
+        delay: 10
+
+    - name: Add host to inventory
+      add_host:
+        name: "{{ vm.vultr_instance.main_ip }}"
+        groups: agent_rig
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ lookup('env', 'SSH_KEY_FILE') }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+- name: Configure VM
+  hosts: agent_rig
+  gather_facts: true
+  vars:
+    dev_user: dev
+    dev_home: /home/dev
+    workspace: /home/dev/dev
+
+  pre_tasks:
+    - name: Wait for system to be ready
+      wait_for_connection:
+        timeout: 60
+
+  roles:
+    - base
+    - gh-cli
+    - yc-cli
+    - docker
+    - hermes-cli
+
+  post_tasks:
+    - name: Print VM info
+      debug:
+        msg:
+          - ""
+          - "✅ {{ vm_label }} provisioned!"
+          - "IP: {{ ansible_host }}"
+          - "SSH: ssh -i <your-key> dev@{{ ansible_host }}"
+          - ""

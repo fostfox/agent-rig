@@ -1,0 +1,115 @@
+---
+- name: Install gh CLI (official repo)
+  block:
+    - name: Add gh CLI GPG key
+      get_url:
+        url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+        dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        mode: "0644"
+
+    - name: Add gh CLI apt repo
+      copy:
+        content: |
+          deb [arch={{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main
+        dest: /etc/apt/sources.list.d/github-cli.list
+
+    - name: Install gh
+      apt:
+        name: gh
+        state: present
+        update_cache: yes
+
+- name: Create gh config directory
+  file:
+    path: "/home/{{ dev_user }}/.config/gh"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0700"
+
+- name: Write GitHub App private key
+  copy:
+    content: "{{ lookup('env', 'GITHUB_APP_PRIVATE_KEY') }}"
+    dest: "/home/{{ dev_user }}/.config/gh/app-key.pem"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0600"
+
+- name: Install token refresh script
+  copy:
+    dest: "/opt/gh-app-token.py"
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env python3
+      """Generate a GitHub App installation token for gh CLI."""
+      import json, time, jwt, requests, os, sys
+
+      with open("/home/{{ dev_user }}/.config/gh/app-key.pem") as f:
+          private_key = f.read()
+
+      client_id = os.environ.get("GH_APP_CLIENT_ID", "").strip()
+      if not client_id:
+          # Fallback: read client_id from a file
+          try:
+              with open("/etc/gh-app-client-id") as f:
+                  client_id = f.read().strip()
+          except FileNotFoundError:
+              print("ERROR: GitHub App client ID not configured", file=sys.stderr)
+              sys.exit(1)
+
+      now = int(time.time())
+      payload = {"iat": now - 60, "exp": now + 600, "iss": client_id}
+      app_token = jwt.encode(payload, private_key, algorithm="RS256")
+
+      resp = requests.get(
+          "https://api.github.com/app/installations",
+          headers={"Authorization": f"Bearer {app_token}", "Accept": "application/vnd.github+json"},
+          timeout=10,
+      )
+      resp.raise_for_status()
+      installations = resp.json()
+      if not installations:
+          print("ERROR: No GitHub App installations found", file=sys.stderr)
+          sys.exit(1)
+
+      inst_id = installations[0]["id"]
+      resp2 = requests.post(
+          f"https://api.github.com/app/installations/{inst_id}/access_tokens",
+          headers={"Authorization": f"Bearer {app_token}", "Accept": "application/vnd.github+json"},
+          timeout=10,
+      )
+      resp2.raise_for_status()
+      print(resp2.json()["token"])
+
+- name: Write GitHub App client ID for token script
+  copy:
+    content: "{{ lookup('env', 'GITHUB_APP_CLIENT_ID') }}\n"
+    dest: /etc/gh-app-client-id
+    mode: "0644"
+
+- name: Add GH_TOKEN auto-refresh to bashrc
+  blockinfile:
+    path: "/home/{{ dev_user }}/.bashrc"
+    block: |
+      # Auto-refresh GitHub App token on login
+      export GH_TOKEN=$(python3 /opt/gh-app-token.py 2>/dev/null || echo "")
+    marker: "# {mark} GITHUB APP TOKEN"
+    state: present
+
+- name: Test gh CLI
+  become_user: "{{ dev_user }}"
+  shell: |
+    TOKEN=$(python3 /opt/gh-app-token.py 2>/dev/null || echo "")
+    if [ -n "$TOKEN" ]; then
+      echo "gh token: OK (generated)"
+    else
+      echo "gh token: SKIPPED (GitHub App not installed yet — run gh auth login manually)"
+    fi
+  register: gh_test
+  ignore_errors: true
+
+- name: Report gh status
+  debug:
+    msg: "{{ gh_test.stdout }}"

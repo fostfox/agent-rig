@@ -1,0 +1,74 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install base packages
+  apt:
+    name:
+      - git
+      - curl
+      - wget
+      - jq
+      - make
+      - python3
+      - python3-pip
+      - python3-venv
+      - python3-apt
+      - unzip
+      - htop
+      - tree
+      - tmux
+      - ripgrep
+      - ca-certificates
+      - gnupg
+      - lsb-release
+    state: present
+
+- name: Create dev user
+  user:
+    name: "{{ dev_user }}"
+    state: present
+    shell: /bin/bash
+    create_home: yes
+    groups: sudo
+    append: yes
+
+- name: Allow dev user sudo without password
+  copy:
+    content: "{{ dev_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    dest: "/etc/sudoers.d/{{ dev_user }}"
+    mode: "0440"
+    validate: visudo -cf %s
+
+- name: Create workspace directory
+  file:
+    path: "{{ workspace }}"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Copy SSH authorized_keys for dev user
+  authorized_key:
+    user: "{{ dev_user }}"
+    key: "{{ lookup('env', 'SSH_PUBLIC_KEY') }}"
+
+- name: Set workspace as default cd in bashrc
+  lineinfile:
+    path: "/home/{{ dev_user }}/.bashrc"
+    line: 'cd ~/dev'
+    regexp: '^cd ~/dev'
+    state: present
+
+- name: Set useful bash aliases
+  blockinfile:
+    path: "/home/{{ dev_user }}/.bashrc"
+    block: |
+      alias ll='ls -la'
+      alias gs='git status'
+      alias gp='git push'
+      alias ..='cd ..'
+    marker: "# {mark} ANSIBLE MANAGED ALIASES"
+    state: present

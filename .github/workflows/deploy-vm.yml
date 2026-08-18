@@ -1,0 +1,89 @@
+name: Deploy VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: "Vultr plan (vc2-1c-2gb, vc2-2c-4gb, etc.)"
+        required: false
+        default: "vc2-2c-4gb"
+      region:
+        description: "Vultr region (fra, sto, hel, etc.)"
+        required: false
+        default: "fra"
+  push:
+    branches: [main]
+    paths:
+      - "ansible/**"
+      - ".github/workflows/**"
+
+env:
+  VULTR_PLAN: vc2-2c-4gb
+  VULTR_REGION: fra
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export: true
+        env:
+          VULTR_API_KEY: "op://GHA/vultr/api_token"
+          SSH_PUBLIC_KEY: "op://GHA/vm_ssh_key/public_key"
+          SSH_PRIVATE_KEY: "op://GHA/vm_ssh_key/private_key"
+          GITHUB_APP_CLIENT_ID: "op://GHA/github_app/client_id"
+          GITHUB_APP_PRIVATE_KEY: "op://GHA/github_app/private_key"
+          OPENROUTER_API_KEY: "op://GHA/openrouter/api_key"
+          YC_SA_KEY_JSON: "op://GHA/yandex_cloud/sa_key_json"
+
+      - name: Write SSH private key
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/agent-rig
+          chmod 600 ~/.ssh/agent-rig
+          echo "SSH_KEY_FILE=$HOME/.ssh/agent-rig" >> $GITHUB_ENV
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+          ansible-galaxy collection install vultr.cloud community.docker community.general
+
+      - name: Override plan/region for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "VULTR_PLAN=${{ github.event.inputs.plan }}" >> $GITHUB_ENV
+          echo "VULTR_REGION=${{ github.event.inputs.region }}" >> $GITHUB_ENV
+
+      - name: Provision and configure VM
+        run: ansible-playbook ansible/playbook.yml
+        env:
+          VULTR_API_KEY: "${{ env.VULTR_API_KEY }}"
+          SSH_PUBLIC_KEY: "${{ env.SSH_PUBLIC_KEY }}"
+          SSH_KEY_FILE: "${{ env.SSH_KEY_FILE }}"
+          VULTR_PLAN: "${{ env.VULTR_PLAN }}"
+          VULTR_REGION: "${{ env.VULTR_REGION }}"
+          GITHUB_APP_CLIENT_ID: "${{ env.GITHUB_APP_CLIENT_ID }}"
+          GITHUB_APP_PRIVATE_KEY: "${{ env.GITHUB_APP_PRIVATE_KEY }}"
+          OPENROUTER_API_KEY: "${{ env.OPENROUTER_API_KEY }}"
+          YC_SA_KEY_JSON: "${{ env.YC_SA_KEY_JSON }}"
+
+      - name: Get VM IP
+        id: vm_info
+        run: |
+          IP=$(grep -A1 "agent_rig" .ansible/inventory 2>/dev/null || echo "unknown (check Vultr console)")
+          echo "ip=$IP" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "## ✅ agent-rig deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Plan | $VULTR_PLAN |" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | $VULTR_REGION |" >> $GITHUB_STEP_SUMMARY
+          echo "| SSH | \`ssh -i <key> dev@<ip>\` |" >> $GITHUB_STEP_SUMMARY
