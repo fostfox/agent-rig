@@ -38,7 +38,7 @@ jobs:
       - name: Set VM label
         id: label
         run: |
-          if [ "$IS_PR" = "true" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "label=agent-rig-sandbox-PR-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
           else
             echo "label=agent-rig" >> $GITHUB_OUTPUT
@@ -121,7 +121,7 @@ jobs:
           echo "| Region | $VULTR_REGION |" >> $GITHUB_STEP_SUMMARY
 
       - name: Comment PR with VM info
-        if: env.IS_PR == 'true'
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
