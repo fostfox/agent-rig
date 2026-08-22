@@ -155,6 +155,7 @@ jobs:
           VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
 
       - name: Destroy sandbox VM
+        continue-on-error: true
         run: |
           LABEL="agent-rig-sandbox-PR-${{ github.event.pull_request.number }}"
           echo "Looking for VM: $LABEL"
