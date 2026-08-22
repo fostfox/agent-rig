@@ -23,7 +23,7 @@
         plan: "{{ vm_plan }}"
         region: "{{ vm_region }}"
         os: "{{ vm_os }}"
-        ssh_keys: ["{{ vultr_ssh_key.vultr_ssh_key.id }}"]
+        ssh_keys: ["{{ vultr_ssh_key.vultr_ssh_key.name }}"]
         hostname: "{{ vm_label }}"
         tags:
           - "{{ vm_label }}"
