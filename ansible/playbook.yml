@@ -8,7 +8,7 @@
     vm_region: "{{ lookup('env', 'VULTR_REGION') | default('fra', true) }}"
     vm_os: "Ubuntu 24.04 LTS x64"
     s3_label: agent-rig-backups
-    s3_cluster: "fra1.vultrobjects.com"
+    s3_cluster: "ams1.vultrobjects.com"
 
   tasks:
     - name: Upload SSH key to Vultr
