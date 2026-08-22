@@ -90,7 +90,6 @@
     content: |
       OPENROUTER_API_KEY={{ lookup('env', 'OPENROUTER_API_KEY') }}
       TELEGRAM_BOT_TOKEN={{ lookup('env', 'TELEGRAM_BOT_TOKEN') | default('', true) }}
-      TELEGRAM_BOT_USERNAME={{ lookup('env', 'TELEGRAM_BOT_USERNAME') | default('', true) }}
     dest: "/home/{{ dev_user }}/.hermes/.env"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"

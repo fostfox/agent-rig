@@ -41,8 +41,7 @@ jobs:
           GITHUB_APP_PRIVATE_KEY: "op://agent-rig/gh_app/private_key"
           OPENROUTER_API_KEY: "op://agent-rig/open_router_api/credential"
           YC_SA_KEY_JSON: "op://agent-rig/yandex_cloud_api/credential"
-          TELEGRAM_BOT_TOKEN: "op://agent-rig/telegram_bot/token"
-          TELEGRAM_BOT_USERNAME: "op://agent-rig/telegram_bot/username"
+          TELEGRAM_BOT_TOKEN: "op://agent-rig/telegram_bot/credential"
           TELEGRAM_ADMIN_CHAT_ID: "op://agent-rig/telegram_bot/admin_chat_id"
           TELEGRAM_ADMIN_USER_ID: "op://agent-rig/telegram_bot/admin_user_id"
 
