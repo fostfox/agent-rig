@@ -11,6 +11,10 @@ on:
         description: "Vultr region (fra, sto, hel, etc.)"
         required: false
         default: "fra"
+      destroy:
+        description: "Destroy VM after deploy (for disposable test runs)"
+        type: boolean
+        default: false
   pull_request:
     branches: [main]
     paths:
@@ -145,7 +149,7 @@ jobs:
             });
 
   cleanup:
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    if: ${{ always() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.destroy)) }}
     needs: provision
     runs-on: ubuntu-latest
     steps:
@@ -157,10 +161,19 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
 
-      - name: Destroy sandbox VM
+      - name: Determine VM label to destroy
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "label=agent-rig-sandbox-PR-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "label=agent-rig" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Destroy VM
         continue-on-error: true
         run: |
-          LABEL="agent-rig-sandbox-PR-${{ github.event.pull_request.number }}"
+          LABEL="${{ steps.target.outputs.label }}"
           echo "Looking for VM: $LABEL"
           INSTANCES=$(curl -s -H "Authorization: Bearer $VULTR_API_KEY" \
             "https://api.vultr.com/v2/instances")
