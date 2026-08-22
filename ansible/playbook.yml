@@ -7,6 +7,8 @@
     vm_plan: "{{ lookup('env', 'VULTR_PLAN') | default('vc2-2c-4gb', true) }}"
     vm_region: "{{ lookup('env', 'VULTR_REGION') | default('fra', true) }}"
     vm_os_id: "213"  # Ubuntu 24.04 LTS
+    s3_label: agent-rig-backups
+    s3_cluster: "{{ vm_region }}"
 
   tasks:
     - name: Upload SSH key to Vultr
@@ -31,6 +33,14 @@
       retries: 3
       delay: 10
 
+    - name: Create Object Storage for backups
+      vultr.cloud.object_storage:
+        label: "{{ s3_label }}"
+        cluster: "{{ s3_cluster }}"
+        state: present
+      register: os
+      when: lookup('env', 'VULTR_API_KEY') | default('', true) != ''
+
     - name: Wait for SSH
       wait_for:
         host: "{{ vm.vultr_instance.main_ip }}"
@@ -38,13 +48,17 @@
         timeout: 300
         delay: 10
 
-    - name: Add host to inventory
+    - name: Add host to inventory with S3 creds
       add_host:
         name: "{{ vm.vultr_instance.main_ip }}"
         groups: agent_rig
         ansible_user: root
         ansible_ssh_private_key_file: "{{ lookup('env', 'SSH_KEY_FILE') }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        s3_access_key: "{{ os.vultr_object_storage.s3_access_key | default('') }}"
+        s3_secret_key: "{{ os.vultr_object_storage.s3_secret_key | default('') }}"
+        s3_hostname: "{{ os.vultr_object_storage.s3_hostname | default('') }}"
+        s3_bucket: "{{ s3_label }}"
 
 - name: Configure VM
   hosts: agent_rig
@@ -53,6 +67,11 @@
     dev_user: dev
     dev_home: /home/dev
     workspace: /home/dev/dev
+    # S3 creds from first play (passed via add_host)
+    s3_access_key: "{{ hostvars[inventory_hostname].s3_access_key | default('') }}"
+    s3_secret_key: "{{ hostvars[inventory_hostname].s3_secret_key | default('') }}"
+    s3_hostname: "{{ hostvars[inventory_hostname].s3_hostname | default('') }}"
+    s3_bucket: "{{ hostvars[inventory_hostname].s3_bucket | default('agent-rig-backups') }}"
 
   pre_tasks:
     - name: Wait for system to be ready
@@ -74,4 +93,5 @@
           - "✅ {{ vm_label }} provisioned!"
           - "IP: {{ ansible_host }}"
           - "SSH: ssh -i <your-key> dev@{{ ansible_host }}"
+          - "S3 backup: {{ s3_hostname }}/{{ s3_bucket }}"
           - ""

@@ -23,15 +23,15 @@
     fi
   when: hermes_install.changed
 
-# ── Clone public repo for config + skills ──
-- name: Get public repo URL
+# ── Clone public repo ──
+- name: Check if public repo exists
   shell: |
     cd /home/{{ dev_user }}/dev/agent-rig && git remote get-url origin 2>/dev/null || echo ""
   register: pub_repo_url
   changed_when: false
   ignore_errors: true
 
-- name: Clone agent-rig (public) for config
+- name: Clone agent-rig (public)
   git:
     repo: https://github.com/fostfox/agent-rig.git
     dest: "/home/{{ dev_user }}/dev/agent-rig"
@@ -40,24 +40,28 @@
   become_user: "{{ dev_user }}"
   when: pub_repo_url.stdout == ""
 
-# ── Clone private repo for memories ──
-- name: Get private repo URL
+# ── Clone private repo via GitHub App token ──
+- name: Check if private repo exists
   shell: |
     cd /home/{{ dev_user }}/dev/agent-rig-data && git remote get-url origin 2>/dev/null || echo ""
   register: priv_repo_url
   changed_when: false
   ignore_errors: true
 
-- name: Clone agent-rig-data (private) for memories
-  git:
-    repo: "https://x-access-token:{{ lookup('env', 'GH_DATA_REPO_TOKEN') }}@github.com/fostfox/agent-rig-data.git"
-    dest: "/home/{{ dev_user }}/dev/agent-rig-data"
-    version: main
-  become_user: "{{ dev_user }}"
+- name: Clone agent-rig-data (private) via GitHub App
+  shell: |
+    TOKEN=$(python3 /opt/gh-app-token.py 2>/dev/null || echo "")
+    if [ -n "$TOKEN" ]; then
+      git clone "https://x-access-token:${TOKEN}@github.com/fostfox/agent-rig-data.git" \
+        /home/{{ dev_user }}/dev/agent-rig-data
+      chown -R {{ dev_user }}:{{ dev_user }} /home/{{ dev_user }}/dev/agent-rig-data
+    fi
+  args:
+    creates: "/home/{{ dev_user }}/dev/agent-rig-data/.git"
   when: priv_repo_url.stdout == ""
 
 # ── Apply config ──
-- name: Copy Hermes config from public repo
+- name: Copy Hermes config
   copy:
     src: "{{ playbook_dir }}/../hermes.yaml"
     dest: "/home/{{ dev_user }}/.hermes/config.yaml"
@@ -65,7 +69,7 @@
     group: "{{ dev_user }}"
     mode: "0644"
 
-- name: Copy SOUL.md from public repo
+- name: Copy SOUL.md
   copy:
     src: "{{ playbook_dir }}/../SOUL.md"
     dest: "/home/{{ dev_user }}/.hermes/SOUL.md"
@@ -81,7 +85,7 @@
     fi
 
 # ── Secrets ──
-- name: Write Hermes secrets (.env)
+- name: Write Hermes .env
   copy:
     content: |
       OPENROUTER_API_KEY={{ lookup('env', 'OPENROUTER_API_KEY') }}
@@ -112,7 +116,7 @@
   when: lookup('env', 'TELEGRAM_NAME') | default('', true) != ''
 
 # ── Skills ──
-- name: Install skills from public repo
+- name: Install skills from repo
   become_user: "{{ dev_user }}"
   shell: |
     for skill_dir in /home/{{ dev_user }}/dev/agent-rig/skills/*/; do
@@ -129,8 +133,21 @@
     hermes skills install github-pr-workflow 2>/dev/null || true
   ignore_errors: true
 
-# ── Sync cron files ──
-- name: Install sync script (memories ↔ private repo)
+# ── Write S3 creds from Object Storage ──
+- name: Write S3 credentials file
+  copy:
+    dest: /etc/hermes-s3-creds
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      S3_ACCESS_KEY={{ s3_access_key }}
+      S3_SECRET_KEY={{ s3_secret_key }}
+      S3_HOSTNAME={{ s3_hostname }}
+      S3_BUCKET={{ s3_bucket }}
+
+# ── Sync script ──
+- name: Install sync script
   copy:
     dest: "/opt/hermes-sync.sh"
     owner: root
@@ -146,6 +163,7 @@
       PUBLIC="/home/{{ dev_user }}/dev/agent-rig"
       PRIVATE="/home/{{ dev_user }}/dev/agent-rig-data"
       HERMES="/home/{{ dev_user }}/.hermes"
+      TOKEN_SCRIPT="/opt/gh-app-token.py"
       LOG="/tmp/hermes-sync.log"
 
       echo "=== Sync $(date -Iseconds) ===" >> "$LOG"
@@ -163,7 +181,12 @@
       if ! git diff --quiet -- memories/; then
         git add memories/
         git commit -m "sync: memory $(date -I)" --no-gpg-sign
-        git push origin main 2>> "$LOG" && echo "pushed memories" >> "$LOG"
+        # Push via GitHub App token
+        TOKEN=$(python3 "$TOKEN_SCRIPT" 2>/dev/null || echo "")
+        if [ -n "$TOKEN" ]; then
+          git push "https://x-access-token:${TOKEN}@github.com/fostfox/agent-rig-data.git" main 2>> "$LOG"
+          echo "pushed memories" >> "$LOG"
+        fi
       fi
 
       # ── PULL config from public repo ──
@@ -182,7 +205,8 @@
       fi
       echo "=== Done $(date -Iseconds) ===" >> "$LOG"
 
-- name: Install S3 backup script (state.db + profile export → Vultr OS)
+# ── Backup script ──
+- name: Install backup script
   copy:
     dest: "/opt/hermes-backup.sh"
     owner: root
@@ -190,43 +214,39 @@
     mode: "0755"
     content: |
       #!/bin/bash
-      # Daily backup: state.db + hermes profile export → Vultr Object Storage
+      # Daily: state.db + profile export → Vultr Object Storage
       set -e
 
-      S3_ENDPOINT="{{ lookup('env', 'S3_ENDPOINT') }}"
-      S3_BUCKET="{{ lookup('env', 'S3_BUCKET') }}"
-      ACCESS_KEY="{{ lookup('env', 'S3_ACCESS_KEY') }}"
-      SECRET_KEY="{{ lookup('env', 'S3_SECRET_KEY') }}"
+      source /etc/hermes-s3-creds
       HERMES="/home/{{ dev_user }}/.hermes"
       DATE=$(date -I)
       LOG="/tmp/hermes-backup.log"
 
       echo "=== Backup $DATE ===" >> "$LOG"
 
-      # s3cmd config
+      apt-get install -y s3cmd 2>/dev/null || true
+
       cat > /tmp/.s3cfg << CFG
       [default]
-      access_key = $ACCESS_KEY
-      secret_key = $SECRET_KEY
-      host_base = $S3_ENDPOINT
-      host_bucket = %(bucket)s.$S3_ENDPOINT
+      access_key = $S3_ACCESS_KEY
+      secret_key = $S3_SECRET_KEY
+      host_base = $S3_HOSTNAME
+      host_bucket = %(bucket)s.$S3_HOSTNAME
       use_https = True
       CFG
 
-      # 1. Profile export (config + SOUL + skills)
+      # Profile export
       hermes profile export default --output /tmp/hermes-export.tar.gz 2>/dev/null || true
       if [ -f /tmp/hermes-export.tar.gz ]; then
         s3cmd -c /tmp/.s3cfg put /tmp/hermes-export.tar.gz s3://$S3_BUCKET/export-$DATE.tar.gz >> "$LOG" 2>&1
-        echo "export uploaded" >> "$LOG"
       fi
 
-      # 2. state.db (disaster recovery)
+      # state.db
       if [ -f "$HERMES/state.db" ]; then
         s3cmd -c /tmp/.s3cfg put "$HERMES/state.db" s3://$S3_BUCKET/state-$DATE.db >> "$LOG" 2>&1
-        echo "state.db uploaded" >> "$LOG"
       fi
 
-      # 3. Clean files older than 30 days
+      # Clean >30 days
       s3cmd -c /tmp/.s3cfg ls s3://$S3_BUCKET/ | while read -r line; do
         ts=$(echo "$line" | awk '{print $1" "$2}')
         age=$(( ($(date +%s) - $(date -d "$ts" +%s)) / 86400 ))
@@ -238,14 +258,15 @@
 
       echo "=== Backup done ===" >> "$LOG"
 
-- name: Install sync cron
+# ── Cron ──
+- name: Install sync cron (every 10 min)
   cron:
     name: hermes-sync
     job: "/opt/hermes-sync.sh"
     minute: "*/10"
     user: "{{ dev_user }}"
 
-- name: Install backup cron
+- name: Install backup cron (daily 3AM)
   cron:
     name: hermes-backup
     job: "/opt/hermes-backup.sh"
@@ -253,6 +274,7 @@
     minute: "0"
     user: "{{ dev_user }}"
 
+# ── Verify ──
 - name: Run hermes doctor
   become_user: "{{ dev_user }}"
   shell: "hermes doctor 2>&1 | head -20"
