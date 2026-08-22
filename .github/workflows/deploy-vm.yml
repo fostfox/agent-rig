@@ -43,7 +43,7 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
           SSH_PUBLIC_KEY: "op://agent-rig/ssh_key/public key"
-          SSH_PRIVATE_KEY: "op://agent-rig/ssh_key/private"
+          SSH_PRIVATE_KEY: "op://agent-rig/ssh_key/private key?ssh-format=openssh"
           GITHUB_APP_CLIENT_ID: "op://agent-rig/gh_app/client_id"
           GITHUB_APP_PRIVATE_KEY: "op://agent-rig/gh_app/private_key"
           OPENROUTER_API_KEY: "op://agent-rig/open_router_api/credential"
@@ -66,7 +66,6 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/agent-rig
           chmod 600 ~/.ssh/agent-rig
           echo "SSH_KEY_FILE=$HOME/.ssh/agent-rig" >> $GITHUB_ENV
-          ssh-keygen -l -f ~/.ssh/agent-rig 2>&1
 
       - name: Install Ansible
         run: |
