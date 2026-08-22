@@ -11,15 +11,23 @@ on:
         description: "Vultr region (fra, sto, hel, etc.)"
         required: false
         default: "fra"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ansible/**"
+      - ".github/workflows/**"
+      - "agent/**"
   push:
     branches: [main]
     paths:
       - "ansible/**"
       - ".github/workflows/**"
+      - "agent/**"
 
 env:
   VULTR_PLAN: vc2-2c-4gb
   VULTR_REGION: fra
+  IS_FULL_DEPLOY: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   provision:
@@ -41,6 +49,14 @@ jobs:
           GITHUB_APP_PRIVATE_KEY: "op://agent-rig/gh_app/private_key"
           OPENROUTER_API_KEY: "op://agent-rig/open_router_api/credential"
           YC_SA_KEY_JSON: "op://agent-rig/yandex_cloud_api/credential"
+
+      - name: Load Telegram secrets (main push only)
+        if: env.IS_FULL_DEPLOY == 'true'
+        uses: 1password/load-secrets-action@v5
+        with:
+          export: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           TELEGRAM_BOT_TOKEN: "op://agent-rig/telegram_bot/credential"
           TELEGRAM_ADMIN_CHAT_ID: "op://agent-rig/telegram_bot/admin_chat_id"
           TELEGRAM_ADMIN_USER_ID: "op://agent-rig/telegram_bot/admin_user_id"
@@ -93,4 +109,25 @@ jobs:
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| Plan | $VULTR_PLAN |" >> $GITHUB_STEP_SUMMARY
           echo "| Region | $VULTR_REGION |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy type | $IS_FULL_DEPLOY |" >> $GITHUB_STEP_SUMMARY
           echo "| SSH | \`ssh -i <key> dev@<ip>\` |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment PR with VM info
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const ip = '${{ steps.vm_info.outputs.ip }}';
+            const pr = context.issue.number;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pr,
+              body: '## ✅ Test VM deployed\n\n' +
+                '| Detail | Value |\n' +
+                '|--------|-------|\n' +
+                `| Plan | ${process.env.VULTR_PLAN} |\n` +
+                `| Region | ${process.env.VULTR_REGION} |\n` +
+                `| SSH | \`ssh -i <key> dev@${ip}\` |\n\n` +
+                '> ⚠️ PR deploy — no Telegram connected. SSH only.'
+            });
