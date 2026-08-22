@@ -1,5 +1,20 @@
+# Secrets — NEVER commit
+.env
+auth.json
+
+# Hermes runtime data (local per-machine, not shared)
+state.db*
+sessions/
+logs/
+.cache/
+
+# Ansible artifacts
 *.retry
+.ansible/
+
+# Python cache
 __pycache__/
 *.pyc
-.env
-.ansible/
+
+# Lock files (scratch)
+*.lock

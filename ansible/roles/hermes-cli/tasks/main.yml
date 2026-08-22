@@ -23,9 +23,26 @@
     fi
   when: hermes_install.changed
 
+- name: Get repo URL from the workspace
+  shell: |
+    cd /home/{{ dev_user }}/dev/agent-rig
+    git remote get-url origin
+  register: repo_url
+  changed_when: false
+  ignore_errors: true
+
+- name: Clone agent-rig if not present
+  git:
+    repo: https://github.com/fostfox/agent-rig.git
+    dest: "/home/{{ dev_user }}/dev/agent-rig"
+    version: main
+    accept_hostkey: yes
+  become_user: "{{ dev_user }}"
+  when: repo_url is failed or repo_url.stdout == ""
+
 - name: Copy Hermes config from repo
   copy:
-    src: ../config/hermes.yaml
+    src: "{{ playbook_dir }}/../hermes.yaml"
     dest: "/home/{{ dev_user }}/.hermes/config.yaml"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
@@ -33,8 +50,16 @@
 
 - name: Copy SOUL.md from repo
   copy:
-    src: ../config/SOUL.md
+    src: "{{ playbook_dir }}/../SOUL.md"
     dest: "/home/{{ dev_user }}/.hermes/SOUL.md"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+- name: Seed memory from repo
+  copy:
+    src: "{{ playbook_dir }}/../memories/"
+    dest: "/home/{{ dev_user }}/.hermes/memories/"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0644"
@@ -48,29 +73,128 @@
     group: "{{ dev_user }}"
     mode: "0600"
 
-- name: Verify Hermes config
+- name: Set Telegram platform config from 1Password
   become_user: "{{ dev_user }}"
-  command: "hermes config list 2>&1 | head -15"
-  register: config_check
-  changed_when: false
+  command: "hermes config set platforms.telegram.enabled true"
+  when: lookup('env', 'TELEGRAM_CHAT_ID') | default('', true) != ''
 
-- name: Show applied config
-  debug:
-    msg: "{{ config_check.stdout_lines }}"
+- name: Set Telegram home channel
+  become_user: "{{ dev_user }}"
+  command: "hermes config set platforms.telegram.home_channel.chat_id {{ lookup('env', 'TELEGRAM_CHAT_ID') }}"
+  when: lookup('env', 'TELEGRAM_CHAT_ID') | default('', true) != ''
 
-- name: Install key Hermes skills
+- name: Set Telegram user info
+  become_user: "{{ dev_user }}"
+  command: "hermes config set platforms.telegram.home_channel.user_id {{ lookup('env', 'TELEGRAM_USER_ID') }}"
+  when: lookup('env', 'TELEGRAM_USER_ID') | default('', true) != ''
+
+- name: Set Telegram name
+  become_user: "{{ dev_user }}"
+  command: "hermes config set platforms.telegram.home_channel.name {{ lookup('env', 'TELEGRAM_NAME') }}"
+  when: lookup('env', 'TELEGRAM_NAME') | default('', true) != ''
+
+- name: Install skills from repo
+  become_user: "{{ dev_user }}"
+  shell: |
+    for skill_dir in /home/{{ dev_user }}/dev/agent-rig/skills/*/; do
+      if [ -f "$skill_dir/SKILL.md" ]; then
+        hermes skills install "$skill_dir" 2>/dev/null || true
+      fi
+    done
+  ignore_errors: true
+
+- name: Install additional key skills
   become_user: "{{ dev_user }}"
   shell: |
     hermes skills install hermes-agent 2>/dev/null || true
     hermes skills install github-pr-workflow 2>/dev/null || true
     hermes skills install claude-code 2>/dev/null || true
     hermes skills install codex 2>/dev/null || true
-
-- name: Install custom skills from repo
-  become_user: "{{ dev_user }}"
-  shell: |
-    hermes skills install /home/{{ dev_user }}/dev/agent-rig/skills/dev-workflow 2>/dev/null || true
   ignore_errors: true
+
+- name: Install sync cron script
+  copy:
+    dest: "/opt/hermes-sync.sh"
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Two-way sync between agent-rig repo and local Hermes config
+      set -e
+
+      REPO_DIR="/home/{{ dev_user }}/dev/agent-rig"
+      HERMES_DIR="/home/{{ dev_user }}/.hermes"
+      LOG="/tmp/hermes-sync.log"
+
+      echo "=== Sync at $(date -Iseconds) ===" >> "$LOG"
+
+      cd "$REPO_DIR"
+
+      # ── PUSH: agent → repo (memory changes) ──
+      for f in MEMORY.md USER.md; do
+        if [ -f "$HERMES_DIR/memories/$f" ]; then
+          if ! diff -q "$HERMES_DIR/memories/$f" "memories/$f" 2>/dev/null; then
+            cp "$HERMES_DIR/memories/$f" "memories/$f"
+            echo "memory $f updated" >> "$LOG"
+          fi
+        fi
+      done
+
+      if ! git diff --quiet -- memories/; then
+        git add memories/
+        git commit -m "sync: memory update $(date -I)"
+        git push origin main 2>> "$LOG" && echo "pushed memory" >> "$LOG"
+      fi
+
+      # ── PULL: repo → agent (config change) ──
+      OLD_HEAD=$(git rev-parse HEAD)
+      git pull origin main 2>> "$LOG" || true
+      NEW_HEAD=$(git rev-parse HEAD)
+
+      if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+        echo "repo changed: $OLD_HEAD → $NEW_HEAD" >> "$LOG"
+
+        # Apply config
+        if git diff --quiet "$OLD_HEAD..$NEW_HEAD" -- hermes.yaml; then
+          : # no change
+        else
+          cp hermes.yaml "$HERMES_DIR/config.yaml"
+          echo "config updated" >> "$LOG"
+        fi
+
+        # Apply SOUL
+        if ! git diff --quiet "$OLD_HEAD..$NEW_HEAD" -- SOUL.md; then
+          cp SOUL.md "$HERMES_DIR/SOUL.md"
+          echo "SOUL updated" >> "$LOG"
+        fi
+
+        # Apply skills
+        for skill_dir in skills/*/; do
+          if [ -f "$skill_dir/SKILL.md" ]; then
+            if ! git diff --quiet "$OLD_HEAD..$NEW_HEAD" -- "$skill_dir"; then
+              hermes skills install "$PWD/$skill_dir" 2>/dev/null || true
+              echo "skill $skill_dir updated" >> "$LOG"
+            fi
+          fi
+        done
+
+        # Apply memory
+        for f in MEMORY.md USER.md; do
+          if [ -f "memories/$f" ]; then
+            cp "memories/$f" "$HERMES_DIR/memories/$f"
+          fi
+        done
+      fi
+
+      echo "=== Sync done at $(date -Iseconds) ===" >> "$LOG"
+
+- name: Install sync cron job (every 10 minutes)
+  cron:
+    name: hermes-sync
+    job: "/opt/hermes-sync.sh"
+    minute: "*/10"
+    user: "{{ dev_user }}"
 
 - name: Run hermes doctor
   become_user: "{{ dev_user }}"
