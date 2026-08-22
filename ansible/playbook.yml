@@ -6,7 +6,7 @@
     vm_label: agent-rig
     vm_plan: "{{ lookup('env', 'VULTR_PLAN') | default('vc2-2c-4gb', true) }}"
     vm_region: "{{ lookup('env', 'VULTR_REGION') | default('fra', true) }}"
-    vm_os: "Ubuntu 24.04 LTS"
+    vm_os: "Ubuntu 24.04 LTS x64"
     s3_label: agent-rig-backups
     s3_cluster: "{{ vm_region }}"
 
