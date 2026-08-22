@@ -37,9 +37,9 @@
       vultr.cloud.object_storage:
         label: "{{ s3_label }}"
         cluster: "{{ s3_cluster }}"
-        tier: standard
         state: present
       register: os
+      ignore_errors: true
       when: lookup('env', 'VULTR_API_KEY') | default('', true) != ''
 
     - name: Wait for SSH
