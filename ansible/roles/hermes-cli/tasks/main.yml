@@ -60,10 +60,10 @@
     creates: "/home/{{ dev_user }}/dev/agent-rig-data/.git"
   when: priv_repo_url.stdout == ""
 
-# ── Apply config ──
+# ── Apply config from agent/ subdirectory ──
 - name: Copy Hermes config
   copy:
-    src: "{{ playbook_dir }}/../hermes.yaml"
+    src: "{{ playbook_dir }}/../agent/hermes.yaml"
     dest: "/home/{{ dev_user }}/.hermes/config.yaml"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
@@ -71,7 +71,7 @@
 
 - name: Copy SOUL.md
   copy:
-    src: "{{ playbook_dir }}/../SOUL.md"
+    src: "{{ playbook_dir }}/../agent/SOUL.md"
     dest: "/home/{{ dev_user }}/.hermes/SOUL.md"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
@@ -115,11 +115,11 @@
   command: "hermes config set platforms.telegram.home_channel.name {{ lookup('env', 'TELEGRAM_NAME') }}"
   when: lookup('env', 'TELEGRAM_NAME') | default('', true) != ''
 
-# ── Skills ──
+# ── Skills from agent/skills/ ──
 - name: Install skills from repo
   become_user: "{{ dev_user }}"
   shell: |
-    for skill_dir in /home/{{ dev_user }}/dev/agent-rig/skills/*/; do
+    for skill_dir in /home/{{ dev_user }}/dev/agent-rig/agent/skills/*/; do
       if [ -f "$skill_dir/SKILL.md" ]; then
         hermes skills install "$skill_dir" 2>/dev/null || true
       fi
@@ -133,7 +133,7 @@
     hermes skills install github-pr-workflow 2>/dev/null || true
   ignore_errors: true
 
-# ── Write S3 creds from Object Storage ──
+# ── S3 credentials ──
 - name: Write S3 credentials file
   copy:
     dest: /etc/hermes-s3-creds
@@ -146,7 +146,7 @@
       S3_HOSTNAME={{ s3_hostname }}
       S3_BUCKET={{ s3_bucket }}
 
-# ── Sync script ──
+# ── Sync script (bidirectional: memories ↔ private, config ← public) ──
 - name: Install sync script
   copy:
     dest: "/opt/hermes-sync.sh"
@@ -157,7 +157,7 @@
       #!/bin/bash
       # agent-rig sync daemon
       #   PUSH: memories → private repo (agent-rig-data)
-      #   PULL: config   → from public repo (agent-rig)
+      #   PULL: agent/    → from public repo (agent-rig)
       set -e
 
       PUBLIC="/home/{{ dev_user }}/dev/agent-rig"
@@ -181,7 +181,6 @@
       if ! git diff --quiet -- memories/; then
         git add memories/
         git commit -m "sync: memory $(date -I)" --no-gpg-sign
-        # Push via GitHub App token
         TOKEN=$(python3 "$TOKEN_SCRIPT" 2>/dev/null || echo "")
         if [ -n "$TOKEN" ]; then
           git push "https://x-access-token:${TOKEN}@github.com/fostfox/agent-rig-data.git" main 2>> "$LOG"
@@ -189,74 +188,94 @@
         fi
       fi
 
-      # ── PULL config from public repo ──
+      # ── PULL agent/ config from public repo ──
       cd "$PUBLIC"
       OLD=$(git rev-parse HEAD)
       git pull origin main 2>> "$LOG" || true
       NEW=$(git rev-parse HEAD)
       if [ "$OLD" != "$NEW" ]; then
         echo "config update: $OLD → $NEW" >> "$LOG"
-        git diff --quiet "$OLD..$NEW" -- hermes.yaml || { cp hermes.yaml "$HERMES/config.yaml"; echo "config applied" >> "$LOG"; }
-        git diff --quiet "$OLD..$NEW" -- SOUL.md || { cp SOUL.md "$HERMES/SOUL.md"; echo "SOUL applied" >> "$LOG"; }
-        for d in skills/*/; do
+        git diff --quiet "$OLD..$NEW" -- agent/hermes.yaml || { cp agent/hermes.yaml "$HERMES/config.yaml"; echo "config applied" >> "$LOG"; }
+        git diff --quiet "$OLD..$NEW" -- agent/SOUL.md || { cp agent/SOUL.md "$HERMES/SOUL.md"; echo "SOUL applied" >> "$LOG"; }
+        for d in agent/skills/*/; do
           [ -f "$d/SKILL.md" ] || continue
           git diff --quiet "$OLD..$NEW" -- "$d" || { hermes skills install "$PWD/$d" 2>/dev/null; echo "skill $d updated" >> "$LOG"; }
         done
       fi
       echo "=== Done $(date -Iseconds) ===" >> "$LOG"
 
-# ── Backup script ──
-- name: Install backup script
+# ── Heartbeat script (PR agent config changes back to public repo) ──
+- name: Install heartbeat script
   copy:
-    dest: "/opt/hermes-backup.sh"
+    dest: "/opt/hermes-heartbeat.sh"
     owner: root
     group: root
     mode: "0755"
     content: |
       #!/bin/bash
-      # Daily: state.db + profile export → Vultr Object Storage
+      # Every 2 days: check if agent config changed locally → PR back to public repo
       set -e
 
-      source /etc/hermes-s3-creds
+      REPO="/home/{{ dev_user }}/dev/agent-rig"
       HERMES="/home/{{ dev_user }}/.hermes"
-      DATE=$(date -I)
-      LOG="/tmp/hermes-backup.log"
+      DATE=$(date +%Y-%m-%d)
+      LOG="/tmp/hermes-heartbeat.log"
 
-      echo "=== Backup $DATE ===" >> "$LOG"
+      echo "=== Heartbeat $DATE ===" >> "$LOG"
 
-      apt-get install -y s3cmd 2>/dev/null || true
+      cd "$REPO"
+      git fetch origin main
 
-      cat > /tmp/.s3cfg << CFG
-      [default]
-      access_key = $S3_ACCESS_KEY
-      secret_key = $S3_SECRET_KEY
-      host_base = $S3_HOSTNAME
-      host_bucket = %(bucket)s.$S3_HOSTNAME
-      use_https = True
-      CFG
+      CHANGED=""
 
-      # Profile export
-      hermes profile export default --output /tmp/hermes-export.tar.gz 2>/dev/null || true
-      if [ -f /tmp/hermes-export.tar.gz ]; then
-        s3cmd -c /tmp/.s3cfg put /tmp/hermes-export.tar.gz s3://$S3_BUCKET/export-$DATE.tar.gz >> "$LOG" 2>&1
-      fi
-
-      # state.db
-      if [ -f "$HERMES/state.db" ]; then
-        s3cmd -c /tmp/.s3cfg put "$HERMES/state.db" s3://$S3_BUCKET/state-$DATE.db >> "$LOG" 2>&1
-      fi
-
-      # Clean >30 days
-      s3cmd -c /tmp/.s3cfg ls s3://$S3_BUCKET/ | while read -r line; do
-        ts=$(echo "$line" | awk '{print $1" "$2}')
-        age=$(( ($(date +%s) - $(date -d "$ts" +%s)) / 86400 ))
-        if [ "$age" -gt 30 ]; then
-          name=$(echo "$line" | awk '{print $4}')
-          s3cmd -c /tmp/.s3cfg del "$name" >> "$LOG" 2>&1
+      for f in hermes.yaml SOUL.md; do
+        src="$HERMES/${f#agent/}"
+        dest="agent/$f"
+        if [ -f "$src" ]; then
+          if ! diff -q "$src" "$dest" 2>/dev/null; then
+            CHANGED=1
+            echo "$f differs" >> "$LOG"
+          fi
         fi
       done
 
-      echo "=== Backup done ===" >> "$LOG"
+      if [ -z "$CHANGED" ]; then
+        echo "No changes" >> "$LOG"
+        exit 0
+      fi
+
+      BRANCH="sync/agent-update-$DATE"
+
+      # If branch already exists from a previous run, skip
+      if git rev-parse --verify "origin/$BRANCH" 2>/dev/null; then
+        echo "Branch $BRANCH already on remote — skipping" >> "$LOG"
+        exit 0
+      fi
+
+      git checkout -b "$BRANCH" origin/main
+      cp "$HERMES/config.yaml" agent/hermes.yaml
+      cp "$HERMES/SOUL.md" agent/SOUL.md
+      git add agent/hermes.yaml agent/SOUL.md
+
+      if git diff --cached --quiet; then
+        echo "No staged changes after copy — skipping" >> "$LOG"
+        git checkout main
+        git branch -D "$BRANCH"
+        exit 0
+      fi
+
+      git commit -m "sync: agent config update $DATE" --no-gpg-sign
+      git push origin "$BRANCH" 2>> "$LOG"
+      gh pr create \
+        --base main \
+        --head "$BRANCH" \
+        --title "sync: agent config $DATE" \
+        --body "Auto-generated heartbeat from VM.\n\nUpdated:\n- hermes.yaml\n- SOUL.md" \
+        --repo fostfox/agent-rig 2>> "$LOG"
+
+      echo "PR created for $BRANCH" >> "$LOG"
+      git checkout main
+      echo "=== Done ===" >> "$LOG"
 
 # ── Cron ──
 - name: Install sync cron (every 10 min)
@@ -264,6 +283,15 @@
     name: hermes-sync
     job: "/opt/hermes-sync.sh"
     minute: "*/10"
+    user: "{{ dev_user }}"
+
+- name: Install heartbeat cron (every 2 days at 6AM)
+  cron:
+    name: hermes-heartbeat
+    job: "/opt/hermes-heartbeat.sh"
+    hour: "6"
+    minute: "0"
+    weekday: "*/2"
     user: "{{ dev_user }}"
 
 - name: Install backup cron (daily 3AM)
