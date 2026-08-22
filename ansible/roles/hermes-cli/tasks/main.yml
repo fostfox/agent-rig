@@ -1,7 +1,9 @@
 ---
 - name: Install Hermes CLI
+  environment:
+    NON_INTERACTIVE: "1"
   shell: |
-    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive
+    timeout 300 bash -c 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive --skip-setup --no-skills' 2>&1 || echo "Install timed out or failed (non-fatal)"
   args:
     creates: /home/{{ dev_user }}/.hermes/bin/hermes
   register: hermes_install
