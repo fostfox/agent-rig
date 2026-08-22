@@ -1,0 +1,12 @@
+name: agent-rig
+version: 1.0.0
+description: >
+  agent-rig — Hermes agent for a provisioned Vultr dev VM.
+  OpenRouter, pipo-robot (GitHub App), Yandex Cloud, Docker.
+hermes_requires: ">=0.12.0"
+author: "Bogdan (fostfox)"
+license: "MIT"
+env_vars:
+  - name: OPENROUTER_API_KEY
+    description: "OpenRouter API key"
+    required: true

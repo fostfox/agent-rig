@@ -3,10 +3,12 @@
   hosts: localhost
   gather_facts: false
   vars:
-    vm_label: agent-rig
+    vm_label: "{{ lookup('env', 'VM_LABEL') | default('agent-rig', true) }}"
     vm_plan: "{{ lookup('env', 'VULTR_PLAN') | default('vc2-2c-4gb', true) }}"
     vm_region: "{{ lookup('env', 'VULTR_REGION') | default('fra', true) }}"
-    vm_os_id: "213"  # Ubuntu 24.04 LTS
+    vm_os: "Ubuntu 24.04 LTS x64"
+    s3_label: agent-rig-backups
+    s3_cluster: "ewr1.vultrobjects.com"
 
   tasks:
     - name: Upload SSH key to Vultr
@@ -20,16 +22,25 @@
         label: "{{ vm_label }}"
         plan: "{{ vm_plan }}"
         region: "{{ vm_region }}"
-        os_id: "{{ vm_os_id }}"
-        ssh_keys: ["{{ vultr_ssh_key.vultr_ssh_key.id }}"]
+        os: "{{ vm_os }}"
+        ssh_keys: ["{{ vultr_ssh_key.vultr_ssh_key.name }}"]
         hostname: "{{ vm_label }}"
         tags:
           - "{{ vm_label }}"
-        backup: false
+        backups: false
       register: vm
       until: vm is success
       retries: 3
       delay: 10
+
+    - name: Create Object Storage for backups
+      vultr.cloud.object_storage:
+        label: "{{ s3_label }}"
+        cluster: "{{ s3_cluster }}"
+        tier: Standard
+        state: present
+      register: os
+      when: lookup('env', 'VULTR_API_KEY') | default('', true) != ''
 
     - name: Wait for SSH
       wait_for:
@@ -38,13 +49,17 @@
         timeout: 300
         delay: 10
 
-    - name: Add host to inventory
+    - name: Add host to inventory with S3 creds
       add_host:
         name: "{{ vm.vultr_instance.main_ip }}"
         groups: agent_rig
         ansible_user: root
         ansible_ssh_private_key_file: "{{ lookup('env', 'SSH_KEY_FILE') }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=6"
+        s3_access_key: "{{ os.vultr_object_storage.s3_access_key | default('') }}"
+        s3_secret_key: "{{ os.vultr_object_storage.s3_secret_key | default('') }}"
+        s3_hostname: "{{ os.vultr_object_storage.s3_hostname | default('') }}"
+        s3_bucket: "{{ s3_label }}"
 
 - name: Configure VM
   hosts: agent_rig
@@ -53,6 +68,10 @@
     dev_user: dev
     dev_home: /home/dev
     workspace: /home/dev/dev
+    s3_access_key: "{{ hostvars[inventory_hostname].s3_access_key | default('') }}"
+    s3_secret_key: "{{ hostvars[inventory_hostname].s3_secret_key | default('') }}"
+    s3_hostname: "{{ hostvars[inventory_hostname].s3_hostname | default('') }}"
+    s3_bucket: "{{ hostvars[inventory_hostname].s3_bucket | default('agent-rig-backups') }}"
 
   pre_tasks:
     - name: Wait for system to be ready
@@ -74,4 +93,5 @@
           - "✅ {{ vm_label }} provisioned!"
           - "IP: {{ ansible_host }}"
           - "SSH: ssh -i <your-key> dev@{{ ansible_host }}"
+          - "S3 backup: {{ s3_hostname }}/{{ s3_bucket }}"
           - ""

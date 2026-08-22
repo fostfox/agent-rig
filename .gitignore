@@ -1,5 +1,19 @@
+# Secrets
+.env
+auth.json
+
+# Runtime data (private per-machine)
+memories/
+state.db*
+sessions/
+logs/
+.cache/
+*.lock
+
+# Ansible artifacts
 *.retry
+.ansible/
+
+# Python cache
 __pycache__/
 *.pyc
-.env
-.ansible/

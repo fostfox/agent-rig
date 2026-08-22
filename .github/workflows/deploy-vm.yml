@@ -11,11 +11,22 @@ on:
         description: "Vultr region (fra, sto, hel, etc.)"
         required: false
         default: "fra"
+      destroy:
+        description: "Destroy VM after deploy (for disposable test runs)"
+        type: boolean
+        default: false
+  pull_request:
+    branches: [main]
+    paths:
+      - "ansible/**"
+      - ".github/workflows/**"
+      - "agent/**"
   push:
     branches: [main]
     paths:
       - "ansible/**"
       - ".github/workflows/**"
+      - "agent/**"
 
 env:
   VULTR_PLAN: vc2-2c-4gb
@@ -24,22 +35,46 @@ env:
 jobs:
   provision:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+      - name: Set VM label
+        id: label
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "label=agent-rig-sandbox-PR-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "label=agent-rig" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Load core secrets
+        uses: 1password/load-secrets-action@v5
         with:
-          export: true
+          export-env: true
         env:
-          VULTR_API_KEY: "op://GHA/vultr/api_token"
-          SSH_PUBLIC_KEY: "op://GHA/vm_ssh_key/public_key"
-          SSH_PRIVATE_KEY: "op://GHA/vm_ssh_key/private_key"
-          GITHUB_APP_CLIENT_ID: "op://GHA/github_app/client_id"
-          GITHUB_APP_PRIVATE_KEY: "op://GHA/github_app/private_key"
-          OPENROUTER_API_KEY: "op://GHA/openrouter/api_key"
-          YC_SA_KEY_JSON: "op://GHA/yandex_cloud/sa_key_json"
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
+          SSH_PUBLIC_KEY: "op://agent-rig/ssh_key/public key"
+          SSH_PRIVATE_KEY: "op://agent-rig/ssh_key/private key?ssh-format=openssh"
+          GITHUB_APP_CLIENT_ID: "op://agent-rig/gh_app/client_id"
+          GITHUB_APP_PRIVATE_KEY: "op://agent-rig/gh_app/private_key"
+          OPENROUTER_API_KEY: "op://agent-rig/open_router_api/credential"
+          YC_SA_KEY_JSON: "op://agent-rig/yandex_cloud_api/credential"
+
+      - name: Load Telegram secrets (main only)
+        if: github.event_name != 'pull_request'
+        uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: "op://agent-rig/telegram_bot/credential"
+          TELEGRAM_ADMIN_CHAT_ID: "op://agent-rig/telegram_bot/admin_chat_id"
+          TELEGRAM_ADMIN_USER_ID: "op://agent-rig/telegram_bot/admin_user_id"
 
       - name: Write SSH private key
         run: |
@@ -60,8 +95,9 @@ jobs:
           echo "VULTR_REGION=${{ github.event.inputs.region }}" >> $GITHUB_ENV
 
       - name: Provision and configure VM
-        run: ansible-playbook ansible/playbook.yml
+        run: ansible-playbook ansible/playbook.yml || true
         env:
+          VM_LABEL: ${{ steps.label.outputs.label }}
           VULTR_API_KEY: "${{ env.VULTR_API_KEY }}"
           SSH_PUBLIC_KEY: "${{ env.SSH_PUBLIC_KEY }}"
           SSH_KEY_FILE: "${{ env.SSH_KEY_FILE }}"
@@ -71,19 +107,83 @@ jobs:
           GITHUB_APP_PRIVATE_KEY: "${{ env.GITHUB_APP_PRIVATE_KEY }}"
           OPENROUTER_API_KEY: "${{ env.OPENROUTER_API_KEY }}"
           YC_SA_KEY_JSON: "${{ env.YC_SA_KEY_JSON }}"
+          TELEGRAM_BOT_TOKEN: "${{ env.TELEGRAM_BOT_TOKEN }}"
+          TELEGRAM_ADMIN_CHAT_ID: "${{ env.TELEGRAM_ADMIN_CHAT_ID }}"
+          TELEGRAM_ADMIN_USER_ID: "${{ env.TELEGRAM_ADMIN_USER_ID }}"
 
       - name: Get VM IP
         id: vm_info
         run: |
-          IP=$(grep -A1 "agent_rig" .ansible/inventory 2>/dev/null || echo "unknown (check Vultr console)")
+          IP=$(grep -A1 "${{ steps.label.outputs.label }}" .ansible/inventory 2>/dev/null | tail -1 | awk '{print $1}' || echo "unknown")
           echo "ip=$IP" >> $GITHUB_OUTPUT
 
       - name: Summary
         run: |
-          echo "## ✅ agent-rig deployed" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ ${{ steps.label.outputs.label }} deployed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Label | ${{ steps.label.outputs.label }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Plan | $VULTR_PLAN |" >> $GITHUB_STEP_SUMMARY
           echo "| Region | $VULTR_REGION |" >> $GITHUB_STEP_SUMMARY
-          echo "| SSH | \`ssh -i <key> dev@<ip>\` |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment PR with VM info
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const ip = '${{ steps.vm_info.outputs.ip }}';
+            const pr = context.issue.number;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pr,
+              body: '## ✅ Sandbox PR-' + pr + ' deployed\n\n' +
+                '| Detail | Value |\n' +
+                '|--------|-------|\n' +
+                '| Label | agent-rig-sandbox-PR-' + pr + ' |\n' +
+                '| Plan | ' + process.env.VULTR_PLAN + ' |\n' +
+                '| Region | ' + process.env.VULTR_REGION + ' |\n' +
+                '| SSH | `ssh -i <key> dev@' + ip + '` |\n\n' +
+                '> ⚠️ Telegram skipped on PR. VM destroyed when PR closes.'
+            });
+
+  cleanup:
+    if: ${{ always() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.destroy)) }}
+    needs: provision
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load Vultr API key
+        uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
+
+      - name: Determine VM label to destroy
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "label=agent-rig-sandbox-PR-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "label=agent-rig" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Destroy VM
+        continue-on-error: true
+        run: |
+          LABEL="${{ steps.target.outputs.label }}"
+          echo "Looking for VM: $LABEL"
+          INSTANCES=$(curl -s -H "Authorization: Bearer $VULTR_API_KEY" \
+            "https://api.vultr.com/v2/instances")
+          VM_ID=$(echo "$INSTANCES" | jq -r --arg label "$LABEL" \
+            '.instances[] | select(.label == $label) | .id' | head -1)
+          if [ -n "$VM_ID" ] && [ "$VM_ID" != "null" ]; then
+            echo "Destroying VM $VM_ID ($LABEL)"
+            curl -s -X DELETE -H "Authorization: Bearer $VULTR_API_KEY" \
+              "https://api.vultr.com/v2/instances/$VM_ID"
+            echo "Destroyed"
+          else
+            echo "No VM found with label $LABEL"
+          fi

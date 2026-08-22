@@ -1,49 +1,88 @@
-# agent-rig 🚀
+# agent-rig
 
-**Provisioned dev VM with pre-configured LLM agent tools.**
+Provisioned dev VM with pre-configured agent tools.
+Ansible + GitHub Actions + 1Password.
 
-A Vultr VM, fully automated via Ansible + GitHub Actions. Spin up a ready-to-use development environment with Hermes CLI, GitHub CLI, Yandex Cloud CLI, Docker, and more — everything configured and authenticated.
+## Architecture
 
-## Quick start
-
-```bash
-# 1. Push to main → triggers provision
-git push origin main
-
-# 2. Wait ~5 min → VM is ready
-
-# 3. SSH in
-ssh dev@<vm-ip>
+```mermaid
+flowchart LR
+    A["Public repo<br/>fostfox/agent-rig"] -->|agent/ + ansible| B["Vultr VM"]
+    C["Private repo<br/>fostfox/agent-rig-data"] -->|memories| B
+    B -->|daily backup| D["Vultr Object Storage<br/>state.db + profile export"]
+    E["1Password vault<br/>agent-rig"] -->|secrets at deploy| B
 ```
 
-## What's inside
+Three repos, one VM:
 
-| Tool | Status |
-|------|--------|
-| **Hermes CLI** | Pre-configured with OpenRouter |
-| **gh CLI** | Authenticated as GitHub App |
-| **yc CLI** | Authenticated with SA key |
-| **Docker** | Installed |
-| **git, curl, jq, make** | Base packages |
-| **Workspace** | `~/dev/` — short clean paths |
+| Repo | Access | Contains |
+|------|--------|----------|
+| **agent-rig** | **public** | `agent/` (config, SOUL, skills, distribution) + `ansible/` + CI/CD |
+| **agent-rig-data** | private | `memories/MEMORY.md` + `USER.md` — synced both ways |
+| **Vultr OS (S3)** | private | Daily `state.db` + profile export backups, 30-day retention |
+
+## What's on the VM
+
+| Tool | How |
+|------|-----|
+| Hermes CLI | OpenRouter, `deepseek/deepseek-v4-flash` |
+| `gh` | Authenticated as `pipo-robot` (GitHub App) |
+| `yc` | Yandex Cloud SA key |
+| Docker | Installed |
+| Workspace | `~/dev/` — short paths |
+
+## Sync
+
+```
+┌─────────────────┐          ┌──────────────────┐
+│  agent-rig      │──pull──→ │  ~/.hermes/       │
+│  (public)       │  10min   │  config, SOUL,    │
+│  agent/         │          │  skills           │
+└──────┬──────────┘          └──────┬───────────┘
+       │                            │ push
+       │  heartbeat PR              │ when memory
+       │  every 2 days              │ changes
+       ▼                            ▼
+┌─────────────────┐          ┌──────────────────┐
+│  agent-rig-data │←──push── │  ~/.hermes/       │
+│  (private)      │  10min   │  memories/        │
+│  memories/      │          │  MEMORY.md        │
+└─────────────────┘          │  USER.md          │
+                             └──────┬───────────┘
+                                    │ daily at 3AM
+                                    ▼
+                          ┌─────────────────┐
+                          │  Vultr OS (S3)   │
+                          │  state.db        │
+                          │  profile export  │
+                          └─────────────────┘
+```
+
+## Deployment
+
+Push to main → GH Actions runs Ansible:
+
+```bash
+# Manually:
+gh workflow run deploy-vm.yml -f plan=vc2-2c-4gb -f region=fra
+```
 
 ## Credentials
 
-All secrets live in **1Password** (vault: `GHA`). The only thing in GitHub is a single `OP_SERVICE_ACCOUNT_TOKEN` secret.
+All secrets in **1Password** (vault: `agent-rig`). The only GitHub secret: `OP_SERVICE_ACCOUNT_TOKEN`.
 
-## Repo structure
+## Repo layout
 
 ```
-├── AGENTS.md              ← portable agent rules
-├── ansible/
-│   ├── playbook.yml       ← provision + configure
-│   ├── requirements.yml   ← Ansible collections
-│   └── roles/
-│       ├── base/          ← system packages, dev user, workspace
-│       ├── gh-cli/        ← install gh, GitHub App auth
-│       ├── yc-cli/        ← install yc, SA key auth
-│       ├── docker/        ← install docker
-│       └── hermes-cli/    ← install hermes, OpenRouter config
-└── .github/workflows/
-    └── deploy-vm.yml      ← 1Password → Ansible → Vultr
+├── agent/                    ← everything that syncs to ~/.hermes/
+│   ├── distribution.yaml     ← Hermes profile manifest
+│   ├── hermes.yaml           ← config (no secrets)
+│   ├── SOUL.md               ← agent identity
+│   └── skills/               ← custom skills
+├── ansible/                  ← VM provisioning
+├── .github/workflows/        ← deploy + backup
+├── AGENTS.md                 ← rules for agents working here
+└── README.md
+
+Try it: hermes profile install fostfox/agent-rig
 ```
