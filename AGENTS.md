@@ -13,6 +13,7 @@ Deploys a dev VM on Vultr with pre-configured LLM agent tools. Everything is cod
 
 - **Workspace is `~/dev/`** — clone all repos there. Short paths only.
 - **No secrets in this repo** — everything comes from 1Password at runtime
+- GitHub App `pipo-robot` handles repo access
 - **PR → review → merge** — never push to main directly
 - Run `ansible-lint` before committing playbook changes
 - Test syntax: `ansible-playbook --syntax-check ansible/playbook.yml`

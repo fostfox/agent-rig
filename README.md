@@ -21,7 +21,7 @@ ssh dev@<vm-ip>
 | Tool | Status |
 |------|--------|
 | **Hermes CLI** | Pre-configured with OpenRouter |
-| **gh CLI** | Authenticated as GitHub App |
+| **gh CLI** | Authenticated as GitHub App (`pipo-robot`) |
 | **yc CLI** | Authenticated with SA key |
 | **Docker** | Installed |
 | **git, curl, jq, make** | Base packages |

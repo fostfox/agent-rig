@@ -33,13 +33,13 @@ jobs:
         with:
           export: true
         env:
-          VULTR_API_KEY: "op://GHA/vultr/api_token"
-          SSH_PUBLIC_KEY: "op://GHA/vm_ssh_key/public_key"
-          SSH_PRIVATE_KEY: "op://GHA/vm_ssh_key/private_key"
-          GITHUB_APP_CLIENT_ID: "op://GHA/github_app/client_id"
-          GITHUB_APP_PRIVATE_KEY: "op://GHA/github_app/private_key"
-          OPENROUTER_API_KEY: "op://GHA/openrouter/api_key"
-          YC_SA_KEY_JSON: "op://GHA/yandex_cloud/sa_key_json"
+          VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
+          SSH_PUBLIC_KEY: "op://agent-rig/ssh_key/public key"
+          SSH_PRIVATE_KEY: "op://agent-rig/ssh_key/private key"
+          GITHUB_APP_CLIENT_ID: "op://agent-rig/gh_app/client_id"
+          GITHUB_APP_PRIVATE_KEY: "op://agent-rig/gh_app/private_key"
+          OPENROUTER_API_KEY: "op://agent-rig/open_router_api/credential"
+          YC_SA_KEY_JSON: "op://agent-rig/yandex_cloud_api/credential"
 
       - name: Write SSH private key
         run: |

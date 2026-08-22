@@ -73,7 +73,7 @@
 
       ## Rules
       - Be concise and factual
-      - When working with GitHub: use `gh` (authenticated as GitHub App)
+      - When working with GitHub: use `gh` (authenticated as `pipo-robot`)
       - When working with Yandex Cloud: use `yc`
       - No secrets in file output — they come from 1Password
 
