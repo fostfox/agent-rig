@@ -81,16 +81,16 @@ jobs:
           pip install ansible
           ansible-galaxy collection install vultr.cloud community.docker community.general
 
-      - name: Destroy old sandbox VMs (pre-flight cleanup)
+      - name: Destroy old VMs (pre-flight cleanup)
         run: |
-          echo "Checking for old sandbox VMs..."
+          echo "Destroying any leftover VMs..."
           INSTANCES=$(curl -s -H "Authorization: Bearer $VULTR_API_KEY" \
             "https://api.vultr.com/v2/instances" | \
-            jq -r '.instances[] | select(.label | startswith("agent-rig-sandbox-PR")) | .label + ":" + .id')
+            jq -r '.instances[] | select(.label | startswith("agent-rig")) | .label + ":" + .id')
           for entry in $INSTANCES; do
             LABEL="${entry%%:*}"
             VID="${entry##*:}"
-            echo "Destroying old VM: $LABEL ($VID)"
+            echo "Destroying: $LABEL ($VID)"
             curl -s -X DELETE -H "Authorization: Bearer $VULTR_API_KEY" \
               "https://api.vultr.com/v2/instances/$VID"
           done
