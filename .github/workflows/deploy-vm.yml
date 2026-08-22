@@ -43,7 +43,7 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
           SSH_PUBLIC_KEY: "op://agent-rig/ssh_key/public key"
-          SSH_PRIVATE_KEY: "op://agent-rig/ssh_key/private"
+          SSH_PRIVATE_KEY: "op://agent-rig/ssh_key/private key"
           GITHUB_APP_CLIENT_ID: "op://agent-rig/gh_app/client_id"
           GITHUB_APP_PRIVATE_KEY: "op://agent-rig/gh_app/private_key"
           OPENROUTER_API_KEY: "op://agent-rig/open_router_api/credential"
@@ -63,9 +63,10 @@ jobs:
       - name: Write SSH private key
         run: |
           mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/agent-rig
+          python3 -c "import os,sys; key=os.environ.get('SSH_PRIVATE_KEY',''); key=key.replace('\\\n','\n').replace('\\\r',''); open(os.path.expanduser('~/.ssh/agent-rig'),'w').write(key); print(f'{len(key)} chars, {key.count(chr(10))+1} lines')"
           chmod 600 ~/.ssh/agent-rig
           echo "SSH_KEY_FILE=$HOME/.ssh/agent-rig" >> $GITHUB_ENV
+          ssh-keygen -l -f ~/.ssh/agent-rig 2>&1 || echo "ssh-keygen failed"
 
       - name: Install Ansible
         run: |
