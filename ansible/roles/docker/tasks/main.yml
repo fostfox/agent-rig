@@ -1,10 +1,17 @@
 ---
-- name: Install Docker via official convenience script
-  shell: |
-    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-    sh /tmp/get-docker.sh
-  args:
-    creates: /usr/bin/docker
+- name: Remove any stale Docker apt repo (avoids GPG conflicts)
+  file:
+    path: /etc/apt/sources.list.d/docker.list
+    state: absent
+
+# Use Ubuntu's native docker.io package — simpler, no GPG issues
+- name: Install Docker from Ubuntu repos
+  apt:
+    name:
+      - docker.io
+      - docker-compose-v2
+    state: present
+    update_cache: yes
 
 - name: Add dev user to docker group
   user:
