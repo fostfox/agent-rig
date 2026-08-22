@@ -1,21 +1,12 @@
 name: agent-rig
 version: 1.0.0
 description: >
-  agent-rig dev VM agent — Hermes with OpenRouter (deepseek/deepseek-v4-flash),
-  GitHub App (pipo-robot), Yandex Cloud CLI, Docker. Pre-configured for Bogdan.
+  agent-rig — Hermes agent for a provisioned Vultr dev VM.
+  OpenRouter, pipo-robot (GitHub App), Yandex Cloud, Docker.
 hermes_requires: ">=0.12.0"
-author: "Bogdan"
+author: "Bogdan (fostfox)"
 license: "MIT"
 env_vars:
   - name: OPENROUTER_API_KEY
-    description: "OpenRouter API key (for model access via router)"
+    description: "OpenRouter API key"
     required: true
-  - name: GITHUB_APP_CLIENT_ID
-    description: "GitHub App client ID for pipo-robot"
-    required: true
-  - name: GITHUB_APP_PRIVATE_KEY
-    description: "GitHub App private key PEM"
-    required: true
-  - name: YC_SA_KEY_JSON
-    description: "Yandex Cloud service account key JSON"
-    required: false

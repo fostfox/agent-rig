@@ -1,66 +1,91 @@
-# agent-rig 🚀
+# agent-rig
 
-**Provisioned dev VM with pre-configured LLM agent tools.**
+Provisioned dev VM with pre-configured agent tools.
+Ansible + GitHub Actions + 1Password.
 
-A Vultr VM, fully automated via Ansible + GitHub Actions. Spin up a ready-to-use development environment with Hermes CLI, GitHub CLI (pipo-robot), Yandex Cloud CLI, Docker + bidirectional config sync.
+## Architecture
 
-> This is a **private repo** — it's both the infrastructure-as-code AND the Hermes profile distribution that the agent syncs against.
+```mermaid
+flowchart LR
+    A["Public repo<br/>github.com/fostfox/agent-rig"] -->|config, skills, ansible| B["Vultr VM"]
+    C["Private repo<br/>github.com/fostfox/agent-rig-data"] -->|memories| B
+    B -->|daily backup| D["Vultr Object Storage<br/>state.db + profile export"]
+    E["1Password vault<br/>agent-rig"] -->|secrets at deploy| B
+```
 
-## Quick start
+Three repos, one VM:
+
+| Repo | Access | Contents |
+|------|--------|----------|
+| **agent-rig** (this one) | public | distribution, config, SOUL, skills, ansible, CI/CD |
+| **agent-rig-data** | private | `memories/MEMORY.md`, `memories/USER.md` — synced both ways |
+| **Vultr OS (S3)** | private | Daily `state.db` + `hermes profile export` backups, 30-day retention |
+
+## What's on the VM
+
+| Tool | How |
+|------|-----|
+| Hermes CLI | OpenRouter, `deepseek/deepseek-v4-flash` |
+| `gh` | Authenticated as `pipo-robot` (GitHub App) |
+| `yc` | Yandex Cloud SA key |
+| Docker | Installed |
+| Workspace | `~/dev/` — short paths |
+
+## Sync
+
+```
+┌─────────────────┐          ┌─────────────────┐
+│  agent-rig      │──pull──→ │  ~/.hermes/      │
+│  (public)       │  10min   │  config, SOUL,   │
+│  config/skills  │          │  skills          │
+└─────────────────┘          └──────┬──────────┘
+                                    │ push
+                                    │ when memory
+                                    │ changes
+                                    ▼
+┌─────────────────┐          ┌─────────────────┐
+│  agent-rig-data │←──push── │  ~/.hermes/      │
+│  (private)      │  10min   │  memories/       │
+│  MEMORY.md      │          │  USER.md         │
+│  USER.md        │          │                  │
+└─────────────────┘          └─────────────────┘
+                                    │
+                                    │ daily at 3AM
+                                    ▼
+                          ┌─────────────────┐
+                          │  Vultr OS (S3)   │
+                          │  state.db        │
+                          │  profile export  │
+                          │  30-day retention│
+                          └─────────────────┘
+```
+
+## Deployment
+
+Push to main → GH Actions runs Ansible:
 
 ```bash
-# Push to main → triggers VM provision
-git push origin main
+# Manually:
+gh workflow run deploy-vm.yml -f plan=vc2-2c-4gb -f region=fra
 
-# Wait ~5 min → VM is ready
-# SSH in:
-ssh -i <key> dev@<vm-ip>
+# Or push changes to ansible/ or .github/workflows/
 ```
 
-## What's inside
+## Credentials
 
-| Tool | Config |
-|------|--------|
-| **Hermes CLI** | Pre-configured OpenRouter, deepseek/deepseek-v4-flash |
-| **gh CLI** | Authenticated as `pipo-robot` (GitHub App) |
-| **yc CLI** | Authenticated with SA key |
-| **Docker** | Installed |
-| **Workspace** | `~/dev/` — short clean paths |
+All secrets live in **1Password** (vault: `agent-rig`).
+The only GitHub secret: `OP_SERVICE_ACCOUNT_TOKEN`.
 
-## Bidirectional sync
-
-The agent on the VM syncs with this repo every 10 minutes:
+## Repo layout
 
 ```
-repo push  →  agent pulls: config.yaml, SOUL.md, skills/
-agent push →  repo pulls: MEMORY.md, USER.md
-```
-
-No secrets in repo — all API keys come from 1Password at deploy time.
-
-## Repo structure
-
-```
-├── distribution.yaml      ← Hermes profile distribution manifest
+├── distribution.yaml       ← Hermes profile manifest
 ├── hermes.yaml             ← agent config (no secrets)
-├── SOUL.md                 ← agent identity (me!)
-├── memories/
-│   ├── MEMORY.md          ← what agent remembers about environment
-│   └── USER.md            ← what agent knows about you
-├── skills/                 ← custom skills installed on the VM
-│   ├── github-pr-review-triage/
-│   ├── github-self-review/
-│   └── http-repository-adapter/
-├── ansible/                ← VM provisioning & tool config
-│   ├── playbook.yml
-│   ├── requirements.yml
-│   └── roles/
-│       ├── base/           ← dev user, packages, workspace
-│       ├── gh-cli/         ← gh + GitHub App (pipo-robot)
-│       ├── yc-cli/         ← yc + SA key auth
-│       ├── docker/         ← Docker install
-│       └── hermes-cli/     ← hermes install + config from repo + sync cron
-├── .github/workflows/
-│   └── deploy-vm.yml      ← 1Password → Ansible → Vultr
-└── AGENTS.md               ← agent rules for working in this repo
+├── SOUL.md                 ← agent identity
+├── skills/                 ← custom skills
+├── ansible/                ← VM provisioning
+├── .github/workflows/      ← deploy + backup
+└── AGENTS.md               ← rules for agents working here
 ```
+
+Try it: `hermes profile install fostfox/agent-rig`

@@ -23,24 +23,41 @@
     fi
   when: hermes_install.changed
 
-- name: Get repo URL from the workspace
+# ── Clone public repo for config + skills ──
+- name: Get public repo URL
   shell: |
-    cd /home/{{ dev_user }}/dev/agent-rig
-    git remote get-url origin
-  register: repo_url
+    cd /home/{{ dev_user }}/dev/agent-rig && git remote get-url origin 2>/dev/null || echo ""
+  register: pub_repo_url
   changed_when: false
   ignore_errors: true
 
-- name: Clone agent-rig if not present
+- name: Clone agent-rig (public) for config
   git:
     repo: https://github.com/fostfox/agent-rig.git
     dest: "/home/{{ dev_user }}/dev/agent-rig"
     version: main
     accept_hostkey: yes
   become_user: "{{ dev_user }}"
-  when: repo_url is failed or repo_url.stdout == ""
+  when: pub_repo_url.stdout == ""
 
-- name: Copy Hermes config from repo
+# ── Clone private repo for memories ──
+- name: Get private repo URL
+  shell: |
+    cd /home/{{ dev_user }}/dev/agent-rig-data && git remote get-url origin 2>/dev/null || echo ""
+  register: priv_repo_url
+  changed_when: false
+  ignore_errors: true
+
+- name: Clone agent-rig-data (private) for memories
+  git:
+    repo: "https://x-access-token:{{ lookup('env', 'GH_DATA_REPO_TOKEN') }}@github.com/fostfox/agent-rig-data.git"
+    dest: "/home/{{ dev_user }}/dev/agent-rig-data"
+    version: main
+  become_user: "{{ dev_user }}"
+  when: priv_repo_url.stdout == ""
+
+# ── Apply config ──
+- name: Copy Hermes config from public repo
   copy:
     src: "{{ playbook_dir }}/../hermes.yaml"
     dest: "/home/{{ dev_user }}/.hermes/config.yaml"
@@ -48,7 +65,7 @@
     group: "{{ dev_user }}"
     mode: "0644"
 
-- name: Copy SOUL.md from repo
+- name: Copy SOUL.md from public repo
   copy:
     src: "{{ playbook_dir }}/../SOUL.md"
     dest: "/home/{{ dev_user }}/.hermes/SOUL.md"
@@ -56,14 +73,14 @@
     group: "{{ dev_user }}"
     mode: "0644"
 
-- name: Seed memory from repo
-  copy:
-    src: "{{ playbook_dir }}/../memories/"
-    dest: "/home/{{ dev_user }}/.hermes/memories/"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
-    mode: "0644"
+- name: Copy memories from private data repo
+  shell: |
+    if [ -d /home/{{ dev_user }}/dev/agent-rig-data/memories ]; then
+      cp -r /home/{{ dev_user }}/dev/agent-rig-data/memories /home/{{ dev_user }}/.hermes/memories
+      chown -R {{ dev_user }}:{{ dev_user }} /home/{{ dev_user }}/.hermes/memories
+    fi
 
+# ── Secrets ──
 - name: Write Hermes secrets (.env)
   copy:
     content: |
@@ -73,17 +90,18 @@
     group: "{{ dev_user }}"
     mode: "0600"
 
-- name: Set Telegram platform config from 1Password
+# ── Platform config from 1Password ──
+- name: Set Telegram platform
   become_user: "{{ dev_user }}"
   command: "hermes config set platforms.telegram.enabled true"
   when: lookup('env', 'TELEGRAM_CHAT_ID') | default('', true) != ''
 
-- name: Set Telegram home channel
+- name: Set Telegram chat_id
   become_user: "{{ dev_user }}"
   command: "hermes config set platforms.telegram.home_channel.chat_id {{ lookup('env', 'TELEGRAM_CHAT_ID') }}"
   when: lookup('env', 'TELEGRAM_CHAT_ID') | default('', true) != ''
 
-- name: Set Telegram user info
+- name: Set Telegram user_id
   become_user: "{{ dev_user }}"
   command: "hermes config set platforms.telegram.home_channel.user_id {{ lookup('env', 'TELEGRAM_USER_ID') }}"
   when: lookup('env', 'TELEGRAM_USER_ID') | default('', true) != ''
@@ -93,7 +111,8 @@
   command: "hermes config set platforms.telegram.home_channel.name {{ lookup('env', 'TELEGRAM_NAME') }}"
   when: lookup('env', 'TELEGRAM_NAME') | default('', true) != ''
 
-- name: Install skills from repo
+# ── Skills ──
+- name: Install skills from public repo
   become_user: "{{ dev_user }}"
   shell: |
     for skill_dir in /home/{{ dev_user }}/dev/agent-rig/skills/*/; do
@@ -103,16 +122,15 @@
     done
   ignore_errors: true
 
-- name: Install additional key skills
+- name: Install hub skills
   become_user: "{{ dev_user }}"
   shell: |
     hermes skills install hermes-agent 2>/dev/null || true
     hermes skills install github-pr-workflow 2>/dev/null || true
-    hermes skills install claude-code 2>/dev/null || true
-    hermes skills install codex 2>/dev/null || true
   ignore_errors: true
 
-- name: Install sync cron script
+# ── Sync cron files ──
+- name: Install sync script (memories ↔ private repo)
   copy:
     dest: "/opt/hermes-sync.sh"
     owner: root
@@ -120,80 +138,119 @@
     mode: "0755"
     content: |
       #!/bin/bash
-      # Two-way sync between agent-rig repo and local Hermes config
+      # agent-rig sync daemon
+      #   PUSH: memories → private repo (agent-rig-data)
+      #   PULL: config   → from public repo (agent-rig)
       set -e
 
-      REPO_DIR="/home/{{ dev_user }}/dev/agent-rig"
-      HERMES_DIR="/home/{{ dev_user }}/.hermes"
+      PUBLIC="/home/{{ dev_user }}/dev/agent-rig"
+      PRIVATE="/home/{{ dev_user }}/dev/agent-rig-data"
+      HERMES="/home/{{ dev_user }}/.hermes"
       LOG="/tmp/hermes-sync.log"
 
-      echo "=== Sync at $(date -Iseconds) ===" >> "$LOG"
+      echo "=== Sync $(date -Iseconds) ===" >> "$LOG"
 
-      cd "$REPO_DIR"
-
-      # ── PUSH: agent → repo (memory changes) ──
+      # ── PUSH memories to private repo ──
+      cd "$PRIVATE"
       for f in MEMORY.md USER.md; do
-        if [ -f "$HERMES_DIR/memories/$f" ]; then
-          if ! diff -q "$HERMES_DIR/memories/$f" "memories/$f" 2>/dev/null; then
-            cp "$HERMES_DIR/memories/$f" "memories/$f"
-            echo "memory $f updated" >> "$LOG"
+        if [ -f "$HERMES/memories/$f" ]; then
+          if ! diff -q "$HERMES/memories/$f" "memories/$f" 2>/dev/null; then
+            cp "$HERMES/memories/$f" "memories/$f"
+            echo "memory $f changed" >> "$LOG"
           fi
         fi
       done
-
       if ! git diff --quiet -- memories/; then
         git add memories/
-        git commit -m "sync: memory update $(date -I)"
-        git push origin main 2>> "$LOG" && echo "pushed memory" >> "$LOG"
+        git commit -m "sync: memory $(date -I)" --no-gpg-sign
+        git push origin main 2>> "$LOG" && echo "pushed memories" >> "$LOG"
       fi
 
-      # ── PULL: repo → agent (config change) ──
-      OLD_HEAD=$(git rev-parse HEAD)
+      # ── PULL config from public repo ──
+      cd "$PUBLIC"
+      OLD=$(git rev-parse HEAD)
       git pull origin main 2>> "$LOG" || true
-      NEW_HEAD=$(git rev-parse HEAD)
-
-      if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
-        echo "repo changed: $OLD_HEAD → $NEW_HEAD" >> "$LOG"
-
-        # Apply config
-        if git diff --quiet "$OLD_HEAD..$NEW_HEAD" -- hermes.yaml; then
-          : # no change
-        else
-          cp hermes.yaml "$HERMES_DIR/config.yaml"
-          echo "config updated" >> "$LOG"
-        fi
-
-        # Apply SOUL
-        if ! git diff --quiet "$OLD_HEAD..$NEW_HEAD" -- SOUL.md; then
-          cp SOUL.md "$HERMES_DIR/SOUL.md"
-          echo "SOUL updated" >> "$LOG"
-        fi
-
-        # Apply skills
-        for skill_dir in skills/*/; do
-          if [ -f "$skill_dir/SKILL.md" ]; then
-            if ! git diff --quiet "$OLD_HEAD..$NEW_HEAD" -- "$skill_dir"; then
-              hermes skills install "$PWD/$skill_dir" 2>/dev/null || true
-              echo "skill $skill_dir updated" >> "$LOG"
-            fi
-          fi
-        done
-
-        # Apply memory
-        for f in MEMORY.md USER.md; do
-          if [ -f "memories/$f" ]; then
-            cp "memories/$f" "$HERMES_DIR/memories/$f"
-          fi
+      NEW=$(git rev-parse HEAD)
+      if [ "$OLD" != "$NEW" ]; then
+        echo "config update: $OLD → $NEW" >> "$LOG"
+        git diff --quiet "$OLD..$NEW" -- hermes.yaml || { cp hermes.yaml "$HERMES/config.yaml"; echo "config applied" >> "$LOG"; }
+        git diff --quiet "$OLD..$NEW" -- SOUL.md || { cp SOUL.md "$HERMES/SOUL.md"; echo "SOUL applied" >> "$LOG"; }
+        for d in skills/*/; do
+          [ -f "$d/SKILL.md" ] || continue
+          git diff --quiet "$OLD..$NEW" -- "$d" || { hermes skills install "$PWD/$d" 2>/dev/null; echo "skill $d updated" >> "$LOG"; }
         done
       fi
+      echo "=== Done $(date -Iseconds) ===" >> "$LOG"
 
-      echo "=== Sync done at $(date -Iseconds) ===" >> "$LOG"
+- name: Install S3 backup script (state.db + profile export → Vultr OS)
+  copy:
+    dest: "/opt/hermes-backup.sh"
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Daily backup: state.db + hermes profile export → Vultr Object Storage
+      set -e
 
-- name: Install sync cron job (every 10 minutes)
+      S3_ENDPOINT="{{ lookup('env', 'S3_ENDPOINT') }}"
+      S3_BUCKET="{{ lookup('env', 'S3_BUCKET') }}"
+      ACCESS_KEY="{{ lookup('env', 'S3_ACCESS_KEY') }}"
+      SECRET_KEY="{{ lookup('env', 'S3_SECRET_KEY') }}"
+      HERMES="/home/{{ dev_user }}/.hermes"
+      DATE=$(date -I)
+      LOG="/tmp/hermes-backup.log"
+
+      echo "=== Backup $DATE ===" >> "$LOG"
+
+      # s3cmd config
+      cat > /tmp/.s3cfg << CFG
+      [default]
+      access_key = $ACCESS_KEY
+      secret_key = $SECRET_KEY
+      host_base = $S3_ENDPOINT
+      host_bucket = %(bucket)s.$S3_ENDPOINT
+      use_https = True
+      CFG
+
+      # 1. Profile export (config + SOUL + skills)
+      hermes profile export default --output /tmp/hermes-export.tar.gz 2>/dev/null || true
+      if [ -f /tmp/hermes-export.tar.gz ]; then
+        s3cmd -c /tmp/.s3cfg put /tmp/hermes-export.tar.gz s3://$S3_BUCKET/export-$DATE.tar.gz >> "$LOG" 2>&1
+        echo "export uploaded" >> "$LOG"
+      fi
+
+      # 2. state.db (disaster recovery)
+      if [ -f "$HERMES/state.db" ]; then
+        s3cmd -c /tmp/.s3cfg put "$HERMES/state.db" s3://$S3_BUCKET/state-$DATE.db >> "$LOG" 2>&1
+        echo "state.db uploaded" >> "$LOG"
+      fi
+
+      # 3. Clean files older than 30 days
+      s3cmd -c /tmp/.s3cfg ls s3://$S3_BUCKET/ | while read -r line; do
+        ts=$(echo "$line" | awk '{print $1" "$2}')
+        age=$(( ($(date +%s) - $(date -d "$ts" +%s)) / 86400 ))
+        if [ "$age" -gt 30 ]; then
+          name=$(echo "$line" | awk '{print $4}')
+          s3cmd -c /tmp/.s3cfg del "$name" >> "$LOG" 2>&1
+        fi
+      done
+
+      echo "=== Backup done ===" >> "$LOG"
+
+- name: Install sync cron
   cron:
     name: hermes-sync
     job: "/opt/hermes-sync.sh"
     minute: "*/10"
+    user: "{{ dev_user }}"
+
+- name: Install backup cron
+  cron:
+    name: hermes-backup
+    job: "/opt/hermes-backup.sh"
+    hour: "3"
+    minute: "0"
     user: "{{ dev_user }}"
 
 - name: Run hermes doctor

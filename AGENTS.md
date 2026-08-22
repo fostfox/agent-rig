@@ -12,7 +12,9 @@ Deploys a dev VM on Vultr with pre-configured LLM agent tools. Everything is cod
 ## Agent rules
 
 - **Workspace is `~/dev/`** — clone all repos there. Short paths only.
-- **No secrets in this repo** — everything comes from 1Password at runtime
+- **Config in `agent-rig` (public)** — pull for config, SOUL, skills updates
+- **Memories in `agent-rig-data` (private)** — push/pull MEMORY.md + USER.md
+- **No secrets in any repo** — everything from 1Password at deploy time
 - GitHub App `pipo-robot` handles repo access
 - **PR → review → merge** — never push to main directly
 - Run `ansible-lint` before committing playbook changes
