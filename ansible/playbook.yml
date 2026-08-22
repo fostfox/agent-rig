@@ -39,7 +39,7 @@
         cluster: "{{ s3_cluster }}"
         state: present
       register: os
-      when: lookup('env', 'VULTR_API_KEY') | default('', true) != '' and (lookup('env', 'IS_PR') | default('false', true) != 'true')
+      when: lookup('env', 'VULTR_API_KEY') | default('', true) != '' and (lookup('env', 'GITHUB_EVENT_NAME') | default('push', true) != 'pull_request')
 
     - name: Wait for SSH
       wait_for:
