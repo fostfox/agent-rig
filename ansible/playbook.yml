@@ -8,7 +8,7 @@
     vm_region: "{{ lookup('env', 'VULTR_REGION') | default('fra', true) }}"
     vm_os: "Ubuntu 24.04 LTS x64"
     s3_label: agent-rig-backups
-    s3_cluster: "{{ vm_region }}"
+    s3_cluster: "fra1.vultrobjects.com"
 
   tasks:
     - name: Upload SSH key to Vultr
@@ -39,7 +39,6 @@
         cluster: "{{ s3_cluster }}"
         state: present
       register: os
-      ignore_errors: true
       when: lookup('env', 'VULTR_API_KEY') | default('', true) != ''
 
     - name: Wait for SSH
@@ -68,7 +67,6 @@
     dev_user: dev
     dev_home: /home/dev
     workspace: /home/dev/dev
-    # S3 creds from first play (passed via add_host)
     s3_access_key: "{{ hostvars[inventory_hostname].s3_access_key | default('') }}"
     s3_secret_key: "{{ hostvars[inventory_hostname].s3_secret_key | default('') }}"
     s3_hostname: "{{ hostvars[inventory_hostname].s3_hostname | default('') }}"
