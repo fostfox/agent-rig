@@ -43,7 +43,7 @@ jobs:
           YC_SA_KEY_JSON: "op://agent-rig/yandex_cloud_api/credential"
           TELEGRAM_CHAT_ID: "op://agent-rig/telegram_chat/chat_id"
           TELEGRAM_USER_ID: "op://agent-rig/telegram_chat/user_id"
-          TELEGRAM_NAME: "op://agent-rig/telegram_chat/name"
+          TELEGRAM_BOT_TOKEN: "op://agent-rig/telegram_bot/token"
 
       - name: Write SSH private key
         run: |
@@ -77,7 +77,7 @@ jobs:
           YC_SA_KEY_JSON: "${{ env.YC_SA_KEY_JSON }}"
           TELEGRAM_CHAT_ID: "${{ env.TELEGRAM_CHAT_ID }}"
           TELEGRAM_USER_ID: "${{ env.TELEGRAM_USER_ID }}"
-          TELEGRAM_NAME: "${{ env.TELEGRAM_NAME }}"
+          TELEGRAM_BOT_TOKEN: "${{ env.TELEGRAM_BOT_TOKEN }}"
 
       - name: Get VM IP
         id: vm_info
