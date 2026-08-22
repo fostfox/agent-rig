@@ -35,6 +35,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Set VM label
+        id: label
+        run: |
+          if [ "$IS_PR" = "true" ]; then
+            echo "label=agent-rig-sandbox-PR-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "label=agent-rig" >> $GITHUB_OUTPUT
+          fi
+
       - name: Load core secrets
         uses: 1password/load-secrets-action@v5
         with:
@@ -79,9 +88,10 @@ jobs:
           echo "VULTR_REGION=${{ github.event.inputs.region }}" >> $GITHUB_ENV
 
       - name: Provision and configure VM
-        continue-on-error: true
         run: ansible-playbook ansible/playbook.yml
         env:
+          VM_LABEL: ${{ steps.label.outputs.label }}
+          IS_PR: ${{ env.IS_PR }}
           VULTR_API_KEY: "${{ env.VULTR_API_KEY }}"
           SSH_PUBLIC_KEY: "${{ env.SSH_PUBLIC_KEY }}"
           SSH_KEY_FILE: "${{ env.SSH_KEY_FILE }}"
@@ -98,21 +108,21 @@ jobs:
       - name: Get VM IP
         id: vm_info
         run: |
-          IP=$(grep -A1 "agent_rig" .ansible/inventory 2>/dev/null || echo "unknown (check Vultr console)")
+          IP=$(grep -A1 "${{ steps.label.outputs.label }}" .ansible/inventory 2>/dev/null | tail -1 | awk '{print $1}' || echo "unknown")
           echo "ip=$IP" >> $GITHUB_OUTPUT
 
       - name: Summary
         run: |
-          echo "## ✅ agent-rig deployed" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ ${{ steps.label.outputs.label }} deployed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Label | ${{ steps.label.outputs.label }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Plan | $VULTR_PLAN |" >> $GITHUB_STEP_SUMMARY
           echo "| Region | $VULTR_REGION |" >> $GITHUB_STEP_SUMMARY
-          echo "| SSH | \`ssh -i <key> dev@<ip>\` |" >> $GITHUB_STEP_SUMMARY
 
       - name: Comment PR with VM info
-        if: github.event_name == 'pull_request'
+        if: env.IS_PR == 'true'
         uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -122,11 +132,41 @@ jobs:
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pr,
-              body: '## ✅ Test VM deployed\n\n' +
+              body: '## ✅ Sandbox PR-' + pr + ' deployed\n\n' +
                 '| Detail | Value |\n' +
                 '|--------|-------|\n' +
-                `| Plan | ${process.env.VULTR_PLAN} |\n` +
-                `| Region | ${process.env.VULTR_REGION} |\n` +
-                `| SSH | \`ssh -i <key> dev@${ip}\` |\n\n` +
-                '> ⚠️ Telegram skipped on PR — SSH only.'
+                '| Label | agent-rig-sandbox-PR-' + pr + ' |\n' +
+                '| Plan | ' + process.env.VULTR_PLAN + ' |\n' +
+                '| Region | ' + process.env.VULTR_REGION + ' |\n' +
+                '| SSH | `ssh -i <key> dev@' + ip + '` |\n\n' +
+                '> ⚠️ Telegram skipped on PR. VM destroyed when PR closes.'
             });
+
+  cleanup:
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: provision
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load Vultr API key
+        uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
+
+      - name: Destroy sandbox VM
+        run: |
+          LABEL="agent-rig-sandbox-PR-${{ github.event.pull_request.number }}"
+          echo "Looking for VM: $LABEL"
+          INSTANCES=$(curl -s -H "Authorization: Bearer $VULTR_API_KEY" \
+            "https://api.vultr.com/v2/instances")
+          VM_ID=$(echo "$INSTANCES" | jq -r --arg label "$LABEL" \
+            '.instances[] | select(.label == $label) | .id' | head -1)
+          if [ -n "$VM_ID" ] && [ "$VM_ID" != "null" ]; then
+            echo "Destroying VM $VM_ID ($LABEL)"
+            curl -s -X DELETE -H "Authorization: Bearer $VULTR_API_KEY" \
+              "https://api.vultr.com/v2/instances/$VM_ID"
+            echo "Destroyed"
+          else
+            echo "No VM found with label $LABEL"
