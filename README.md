@@ -35,6 +35,11 @@ All secrets live in **1Password** (vault: `GHA`). The only thing in GitHub is a 
 
 ```
 ├── AGENTS.md              ← portable agent rules
+├── config/
+│   ├── hermes.yaml       ← Hermes config template (no secrets)
+│   └── SOUL.md           ← agent identity (me)
+├── skills/
+│   └── dev-workflow/     ← custom skill for rig maintenance
 ├── ansible/
 │   ├── playbook.yml       ← provision + configure
 │   ├── requirements.yml   ← Ansible collections
@@ -43,7 +48,7 @@ All secrets live in **1Password** (vault: `GHA`). The only thing in GitHub is a 
 │       ├── gh-cli/        ← install gh, GitHub App auth
 │       ├── yc-cli/        ← install yc, SA key auth
 │       ├── docker/        ← install docker
-│       └── hermes-cli/    ← install hermes, OpenRouter config
+│       └── hermes-cli/    ← install hermes, apply config/ + SOUL.md
 └── .github/workflows/
     └── deploy-vm.yml      ← 1Password → Ansible → Vultr
 ```

@@ -5,8 +5,6 @@
   args:
     creates: /home/{{ dev_user }}/.hermes/bin/hermes
   register: hermes_install
-  # Note: install.sh writes to ~/.hermes/ — runs as root in playbook context
-  # We'll fix ownership after
 
 - name: Fix Hermes ownership
   file:
@@ -25,21 +23,21 @@
     fi
   when: hermes_install.changed
 
-- name: Configure Hermes (provider)
-  become_user: "{{ dev_user }}"
-  command: "hermes config set model.provider openrouter"
+- name: Copy Hermes config from repo
+  copy:
+    src: ../config/hermes.yaml
+    dest: "/home/{{ dev_user }}/.hermes/config.yaml"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
 
-- name: Configure Hermes (model)
-  become_user: "{{ dev_user }}"
-  command: "hermes config set model.default deepseek/deepseek-v4-flash"
-
-- name: Configure Hermes (base URL)
-  become_user: "{{ dev_user }}"
-  command: "hermes config set model.base_url https://openrouter.ai/api/v1"
-
-- name: Configure Hermes (max turns)
-  become_user: "{{ dev_user }}"
-  command: "hermes config set agent.max_turns 150"
+- name: Copy SOUL.md from repo
+  copy:
+    src: ../config/SOUL.md
+    dest: "/home/{{ dev_user }}/.hermes/SOUL.md"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
 
 - name: Write Hermes secrets (.env)
   copy:
@@ -50,32 +48,15 @@
     group: "{{ dev_user }}"
     mode: "0600"
 
-- name: Set workspace as default Hermes cwd
+- name: Verify Hermes config
   become_user: "{{ dev_user }}"
-  command: "hermes config set terminal.cwd /home/{{ dev_user }}/dev"
+  command: "hermes config list 2>&1 | head -15"
+  register: config_check
+  changed_when: false
 
-- name: Write SOUL.md (agent identity)
-  copy:
-    dest: "/home/{{ dev_user }}/.hermes/SOUL.md"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
-    mode: "0644"
-    content: |
-      # SOUL: agent-rig dev VM agent
-
-      You are the **agent-rig** dev environment agent.
-      You live on a Vultr VM provisioned for Bogdan.
-
-      ## Identity
-      - You are a helpful dev environment assistant
-      - Your workspace is `/home/dev/dev/` — use short paths
-      - You have gh, yc, docker, git available
-
-      ## Rules
-      - Be concise and factual
-      - When working with GitHub: use `gh` (authenticated as `pipo-robot`)
-      - When working with Yandex Cloud: use `yc`
-      - No secrets in file output — they come from 1Password
+- name: Show applied config
+  debug:
+    msg: "{{ config_check.stdout_lines }}"
 
 - name: Install key Hermes skills
   become_user: "{{ dev_user }}"
@@ -84,6 +65,11 @@
     hermes skills install github-pr-workflow 2>/dev/null || true
     hermes skills install claude-code 2>/dev/null || true
     hermes skills install codex 2>/dev/null || true
+
+- name: Install custom skills from repo
+  become_user: "{{ dev_user }}"
+  shell: |
+    hermes skills install /home/{{ dev_user }}/dev/agent-rig/skills/dev-workflow 2>/dev/null || true
   ignore_errors: true
 
 - name: Run hermes doctor
