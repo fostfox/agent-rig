@@ -63,9 +63,14 @@ jobs:
       - name: Write SSH private key
         run: |
           mkdir -p ~/.ssh
+          echo "=== SSH key first line ==="
+          echo "$SSH_PRIVATE_KEY" | head -1
+          echo "=== Line count ==="
+          echo "$SSH_PRIVATE_KEY" | wc -l
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/agent-rig
           chmod 600 ~/.ssh/agent-rig
           echo "SSH_KEY_FILE=$HOME/.ssh/agent-rig" >> $GITHUB_ENV
+          ssh-keygen -l -f ~/.ssh/agent-rig 2>&1 || echo "ssh-keygen failed"
 
       - name: Install Ansible
         run: |
