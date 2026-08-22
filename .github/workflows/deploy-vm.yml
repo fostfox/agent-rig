@@ -26,13 +26,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+        uses: 1password/load-secrets-action@v5
         with:
           export: true
         env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           VULTR_API_KEY: "op://agent-rig/vultr_api/credential"
           SSH_PUBLIC_KEY: "op://agent-rig/ssh_key/public key"
           SSH_PRIVATE_KEY: "op://agent-rig/ssh_key/private key"
