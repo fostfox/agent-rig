@@ -1,15 +1,11 @@
 ---
-- name: Remove stale Docker apt repo (leftover from earlier runs)
-  file:
-    path: /etc/apt/sources.list.d/docker.list
-    state: absent
-  ignore_errors: true
-
-- name: Update apt cache fresh
-  apt:
-    update_cache: yes
-    cache_valid_time: 0
-  ignore_errors: true
+# Docker install — non-blocking. If it fails, VM still works, just without Docker.
+- name: Remove stale Docker repos and keys
+  shell: |
+    rm -f /etc/apt/sources.list.d/docker.list 2>/dev/null || true
+    apt-key del 7EA0A9C3F273FCD8 2>/dev/null || true
+  changed_when: false
+  failed_when: false
 
 - name: Install Docker from Ubuntu repos
   apt:
@@ -17,17 +13,20 @@
       - docker.io
       - docker-compose-v2
     state: present
-  ignore_errors: true
+    update_cache: yes
+    cache_valid_time: 0
+  failed_when: false
 
 - name: Add dev user to docker group
   user:
     name: "{{ dev_user }}"
     groups: docker
     append: yes
+  failed_when: false
 
 - name: Enable and start Docker
   systemd:
     name: docker
     enabled: yes
     state: started
-  ignore_errors: true
+  failed_when: false
