@@ -90,6 +90,7 @@
     content: |
       OPENROUTER_API_KEY={{ lookup('env', 'OPENROUTER_API_KEY') }}
       TELEGRAM_BOT_TOKEN={{ lookup('env', 'TELEGRAM_BOT_TOKEN') | default('', true) }}
+      TELEGRAM_BOT_USERNAME={{ lookup('env', 'TELEGRAM_BOT_USERNAME') | default('', true) }}
     dest: "/home/{{ dev_user }}/.hermes/.env"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
@@ -99,22 +100,17 @@
 - name: Set Telegram platform
   become_user: "{{ dev_user }}"
   command: "hermes config set platforms.telegram.enabled true"
-  when: lookup('env', 'TELEGRAM_CHAT_ID') | default('', true) != ''
+  when: lookup('env', 'TELEGRAM_ADMIN_CHAT_ID') | default('', true) != ''
 
 - name: Set Telegram chat_id
   become_user: "{{ dev_user }}"
-  command: "hermes config set platforms.telegram.home_channel.chat_id {{ lookup('env', 'TELEGRAM_CHAT_ID') }}"
-  when: lookup('env', 'TELEGRAM_CHAT_ID') | default('', true) != ''
+  command: "hermes config set platforms.telegram.home_channel.chat_id {{ lookup('env', 'TELEGRAM_ADMIN_CHAT_ID') }}"
+  when: lookup('env', 'TELEGRAM_ADMIN_CHAT_ID') | default('', true) != ''
 
 - name: Set Telegram user_id
   become_user: "{{ dev_user }}"
-  command: "hermes config set platforms.telegram.home_channel.user_id {{ lookup('env', 'TELEGRAM_USER_ID') }}"
-  when: lookup('env', 'TELEGRAM_USER_ID') | default('', true) != ''
-
-- name: Set Telegram name
-  become_user: "{{ dev_user }}"
-  command: "hermes config set platforms.telegram.home_channel.name {{ lookup('env', 'TELEGRAM_NAME') }}"
-  when: lookup('env', 'TELEGRAM_NAME') | default('', true) != ''
+  command: "hermes config set platforms.telegram.home_channel.user_id {{ lookup('env', 'TELEGRAM_ADMIN_USER_ID') }}"
+  when: lookup('env', 'TELEGRAM_ADMIN_USER_ID') | default('', true) != ''
 
 # ── Skills from agent/skills/ ──
 - name: Install skills from repo
