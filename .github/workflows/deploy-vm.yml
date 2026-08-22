@@ -87,15 +87,6 @@ jobs:
           echo "VULTR_PLAN=${{ github.event.inputs.plan }}" >> $GITHUB_ENV
           echo "VULTR_REGION=${{ github.event.inputs.region }}" >> $GITHUB_ENV
 
-      - name: Get available S3 tier
-        run: |
-          echo "Querying available tiers for cluster ewr1..."
-          TIERS=$(curl -s -H "Authorization: Bearer $VULTR_API_KEY" \
-            "https://api.vultr.com/v2/object-storage/clusters/2/tiers")
-          echo "$TIERS" | jq -r '.tiers[] | .sales_name'
-          TIER=$(echo "$TIERS" | jq -r '.tiers[0].sales_name // "Legacy"')
-          echo "S3_TIER=$TIER" >> $GITHUB_ENV
-
       - name: Provision and configure VM
         run: ansible-playbook ansible/playbook.yml
         env:
@@ -112,7 +103,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: "${{ env.TELEGRAM_BOT_TOKEN }}"
           TELEGRAM_ADMIN_CHAT_ID: "${{ env.TELEGRAM_ADMIN_CHAT_ID }}"
           TELEGRAM_ADMIN_USER_ID: "${{ env.TELEGRAM_ADMIN_USER_ID }}"
-          S3_TIER: "${{ env.S3_TIER }}"
 
       - name: Get VM IP
         id: vm_info

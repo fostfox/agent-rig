@@ -37,7 +37,7 @@
       vultr.cloud.object_storage:
         label: "{{ s3_label }}"
         cluster: "{{ s3_cluster }}"
-        tier: "{{ lookup('env', 'S3_TIER') | default('Legacy', true) }}"
+        tier: Standard
         state: present
       register: os
       when: lookup('env', 'VULTR_API_KEY') | default('', true) != ''
