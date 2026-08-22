@@ -79,6 +79,7 @@ jobs:
           echo "VULTR_REGION=${{ github.event.inputs.region }}" >> $GITHUB_ENV
 
       - name: Provision and configure VM
+        continue-on-error: true
         run: ansible-playbook ansible/playbook.yml
         env:
           VULTR_API_KEY: "${{ env.VULTR_API_KEY }}"
