@@ -55,7 +55,7 @@
         groups: agent_rig
         ansible_user: root
         ansible_ssh_private_key_file: "{{ lookup('env', 'SSH_KEY_FILE') }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=6"
         s3_access_key: "{{ os.vultr_object_storage.s3_access_key | default('') }}"
         s3_secret_key: "{{ os.vultr_object_storage.s3_secret_key | default('') }}"
         s3_hostname: "{{ os.vultr_object_storage.s3_hostname | default('') }}"
