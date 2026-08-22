@@ -6,7 +6,7 @@
     vm_label: agent-rig
     vm_plan: "{{ lookup('env', 'VULTR_PLAN') | default('vc2-2c-4gb', true) }}"
     vm_region: "{{ lookup('env', 'VULTR_REGION') | default('fra', true) }}"
-    vm_os_id: "213"  # Ubuntu 24.04 LTS
+    vm_os: "Ubuntu 24.04 LTS"
     s3_label: agent-rig-backups
     s3_cluster: "{{ vm_region }}"
 
@@ -22,12 +22,12 @@
         label: "{{ vm_label }}"
         plan: "{{ vm_plan }}"
         region: "{{ vm_region }}"
-        os_id: "{{ vm_os_id }}"
+        os: "{{ vm_os }}"
         ssh_keys: ["{{ vultr_ssh_key.vultr_ssh_key.id }}"]
         hostname: "{{ vm_label }}"
         tags:
           - "{{ vm_label }}"
-        backup: false
+        backups: false
       register: vm
       until: vm is success
       retries: 3
